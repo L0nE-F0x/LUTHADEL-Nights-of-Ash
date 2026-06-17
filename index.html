@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+    <title>Luthadel — Nights of Ash</title>
+    <meta name="description" content="A 3D first-person walk through misty Luthadel. An unofficial Mistborn fan project." />
+  </head>
+  <body>
+    <div id="app"></div>
+
+    <!-- cinematic overlays -->
+    <div id="vignette"></div>
+    <div id="burnfx"></div>
+    <div id="pewterfx"></div>
+    <div id="crosshair" class="hidden">&#10022;</div>
+
+    <!-- proximity prompt -->
+    <div id="prompt" class="hidden"><span class="key">E</span> <span id="prompt-label">read</span></div>
+
+    <!-- lore panel -->
+    <div id="lore" class="hidden">
+      <h2 id="lore-title"></h2>
+      <p id="lore-body"></p>
+      <div class="lore-foot"><span class="key">E</span> close</div>
+    </div>
+
+    <!-- intro / pause -->
+    <div id="intro" class="overlay">
+      <div class="intro-card">
+        <h1>LUTHADEL</h1>
+        <p class="sub">Nights of Ash</p>
+        <p class="lede">Ash falls from a red sun, and with the dark the mists rise over the Final Empire. Step into the street &mdash; and if you have the gift, burn steel and leap the rooftops.</p>
+        <button id="enterBtn">Enter the Mist</button>
+        <ul class="controls">
+          <li><b>W A S D</b> &middot; walk</li>
+          <li><b>Mouse</b> &middot; look</li>
+          <li><b>Shift</b> &middot; burn pewter (sprint)</li>
+          <li><b>F</b> &middot; burn steel (sight)</li>
+          <li><b>L-click</b> &middot; steel-push &nbsp;&middot;&nbsp; <b>R-click</b> &middot; iron-pull</li>
+          <li><b>Space</b> &middot; steel-leap</li>
+          <li><b>T</b> &middot; burn tin (senses) &nbsp;&middot;&nbsp; <b>G</b> &middot; burn atium</li>
+          <li><b>E</b> &middot; read inscriptions</li>
+          <li><b>M</b> &middot; mute &nbsp;&middot;&nbsp; <b>Esc</b> &middot; release cursor</li>
+        </ul>
+        <p class="disc">An unofficial, non-commercial fan project. <i>Mistborn</i> and its world are &copy; Brandon Sanderson &amp; Dragonsteel Entertainment. Made by a fan &mdash; not for sale.</p>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

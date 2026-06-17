@@ -1,0 +1,11 @@
+node_modules
+dist
+dist-ssr
+.vite
+*.local
+.DS_Store
+npm-debug.log*
+
+# Claude Code working files — kept local, not part of the deployable site
+.claude/
+CLAUDE.md

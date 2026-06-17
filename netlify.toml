@@ -1,0 +1,11 @@
+# Netlify build config for the Vite static site.
+# Netlify runs the build, then serves the generated dist/ folder.
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+# Single-page app: serve index.html for any path (harmless even with no routing).
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

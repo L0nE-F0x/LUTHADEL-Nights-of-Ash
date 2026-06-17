@@ -1,0 +1,154 @@
+:root {
+  --ash: #cfc6b8;
+  --ember: #d98a3a;
+  --blood: #b0392b;
+  --ink: #0a0807;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: #000;
+  color: var(--ash);
+  font-family: "Iowan Old Style", "Palatino Linotype", Georgia, "Times New Roman", serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+#app, #app canvas { display: block; width: 100vw; height: 100vh; }
+
+.hidden { display: none !important; }
+
+/* ---- cinematic vignette + faint ash haze over everything ---- */
+#vignette {
+  position: fixed; inset: 0; pointer-events: none; z-index: 5;
+  background:
+    radial-gradient(120% 95% at 50% 42%, transparent 52%, rgba(0,0,0,0.55) 100%),
+    radial-gradient(60% 50% at 50% 88%, rgba(60,20,10,0.18), transparent 70%);
+  mix-blend-mode: multiply;
+}
+
+/* ---- allomantic "burning steel" tint: cold blue creeps in at the edges ---- */
+#burnfx {
+  position: fixed; inset: 0; pointer-events: none; z-index: 5; opacity: 0;
+  transition: opacity .18s ease;
+  background:
+    radial-gradient(120% 100% at 50% 50%, transparent 55%, rgba(46,108,210,0.16) 100%),
+    radial-gradient(80% 60% at 50% 0%, rgba(70,130,230,0.10), transparent 60%);
+  mix-blend-mode: screen;
+}
+body.burning #burnfx { opacity: 1; }
+
+/* ---- pewter "sprint" surge: a faint warm pulse at the edges ---- */
+#pewterfx {
+  position: fixed; inset: 0; pointer-events: none; z-index: 5; opacity: 0;
+  transition: opacity .15s ease;
+  background: radial-gradient(125% 100% at 50% 50%, transparent 58%, rgba(214,120,42,0.13) 100%);
+  mix-blend-mode: screen;
+}
+body.pewter #pewterfx { opacity: 1; }
+
+/* ---- crosshair ---- */
+#crosshair {
+  position: fixed; left: 50%; top: 50%; transform: translate(-50%,-50%);
+  z-index: 6; color: rgba(220,210,195,0.5); font-size: 16px; pointer-events: none;
+  text-shadow: 0 0 6px rgba(0,0,0,0.8);
+}
+
+/* ---- proximity prompt ---- */
+#prompt {
+  position: fixed; left: 50%; bottom: 12%; transform: translateX(-50%);
+  z-index: 6; pointer-events: none; letter-spacing: 0.04em;
+  color: rgba(232,222,205,0.92); font-size: 18px;
+  text-shadow: 0 2px 10px #000; animation: rise .35s ease;
+}
+.key {
+  display: inline-block; min-width: 1.5em; padding: 1px 7px; margin: 0 2px;
+  border: 1px solid rgba(217,138,58,0.7); border-radius: 5px;
+  color: var(--ember); font-family: ui-monospace, "Consolas", monospace; font-size: 0.8em;
+  box-shadow: 0 0 12px rgba(217,138,58,0.25); background: rgba(20,12,8,0.6);
+}
+
+/* ---- lore panel ---- */
+#lore {
+  position: fixed; left: 50%; top: 50%; transform: translate(-50%,-50%);
+  z-index: 7; width: min(560px, 86vw); padding: 30px 34px;
+  background: linear-gradient(180deg, rgba(18,12,9,0.94), rgba(9,6,5,0.96));
+  border: 1px solid rgba(217,138,58,0.35);
+  border-radius: 4px;
+  box-shadow: 0 0 0 1px rgba(0,0,0,0.6), 0 30px 80px rgba(0,0,0,0.7),
+              inset 0 0 60px rgba(80,30,15,0.12);
+  animation: rise .35s ease;
+}
+#lore h2 {
+  margin: 0 0 14px; font-size: 26px; font-weight: 600; letter-spacing: 0.03em;
+  color: #efe6d4;
+}
+#lore h2::after {
+  content: ""; display: block; width: 60px; height: 1px; margin-top: 12px;
+  background: linear-gradient(90deg, var(--ember), transparent);
+}
+#lore p {
+  margin: 0; font-size: 17px; line-height: 1.75; color: rgba(214,204,188,0.92);
+}
+.lore-foot {
+  margin-top: 22px; font-size: 13px; color: rgba(180,168,150,0.6);
+  letter-spacing: 0.05em; text-align: right;
+}
+
+/* ---- intro / pause overlay ---- */
+.overlay {
+  position: fixed; inset: 0; z-index: 10; display: grid; place-items: center;
+  background: radial-gradient(80% 80% at 50% 40%, rgba(20,12,9,0.7), rgba(4,3,3,0.93));
+  backdrop-filter: blur(2px);
+}
+.intro-card { text-align: center; padding: 24px; max-width: 540px; }
+.intro-card h1 {
+  margin: 0; font-size: clamp(44px, 9vw, 84px); letter-spacing: 0.14em;
+  font-weight: 600; color: #ece2cf;
+  text-shadow: 0 0 30px rgba(176,57,43,0.35), 0 4px 20px #000;
+}
+.intro-card .sub {
+  margin: 4px 0 0; font-size: 20px; letter-spacing: 0.42em; text-transform: uppercase;
+  color: var(--ember); opacity: 0.85;
+}
+.intro-card .lede {
+  margin: 26px auto 30px; max-width: 440px; font-size: 17px; line-height: 1.7;
+  color: rgba(206,196,180,0.85);
+}
+#enterBtn {
+  font: inherit; font-size: 18px; letter-spacing: 0.06em; cursor: pointer;
+  color: #f0e7d6; padding: 13px 34px; border-radius: 3px;
+  background: linear-gradient(180deg, rgba(150,52,28,0.5), rgba(60,20,10,0.5));
+  border: 1px solid rgba(217,138,58,0.6);
+  box-shadow: 0 0 24px rgba(176,57,43,0.25), inset 0 1px 0 rgba(255,200,160,0.15);
+  transition: transform .12s ease, box-shadow .2s ease, background .2s ease;
+}
+#enterBtn:hover {
+  transform: translateY(-1px);
+  background: linear-gradient(180deg, rgba(176,62,34,0.65), rgba(70,24,12,0.6));
+  box-shadow: 0 0 36px rgba(176,57,43,0.4), inset 0 1px 0 rgba(255,200,160,0.2);
+}
+.controls {
+  list-style: none; padding: 0; margin: 34px auto 0; max-width: 360px;
+  display: flex; flex-wrap: wrap; gap: 6px 18px; justify-content: center;
+  font-size: 14px; color: rgba(190,180,164,0.7);
+}
+.controls b { color: rgba(230,220,202,0.95); font-weight: 600; }
+.disc {
+  margin: 34px auto 0; max-width: 460px; font-size: 12px; line-height: 1.6;
+  color: rgba(150,140,124,0.55);
+}
+
+@keyframes rise {
+  from { opacity: 0; transform: translate(-50%, calc(-50% + 10px)); }
+  to   { opacity: 1; }
+}
+/* prompt uses translateX only, so give it its own keyframe target */
+#prompt { animation-name: riseX; }
+@keyframes riseX {
+  from { opacity: 0; transform: translate(-50%, 10px); }
+  to   { opacity: 1; transform: translate(-50%, 0); }
+}
