@@ -4,6 +4,10 @@
   command = "npm run build"
   publish = "dist"
 
+# Pin Node so the Vite 6 build is reproducible (it needs Node 18+).
+[build.environment]
+  NODE_VERSION = "20"
+
 # Single-page app: serve index.html for any path (harmless even with no routing).
 [[redirects]]
   from = "/*"
