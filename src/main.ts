@@ -256,10 +256,10 @@ app.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
 const FOG = 0x140d0a;
-scene.fog = new THREE.FogExp2(FOG, 0.0125);
+scene.fog = new THREE.FogExp2(FOG, 0.010);   // a touch thinner, so the avenue reveals its depth into the mist
 
 const camera = new THREE.PerspectiveCamera(72, window.innerWidth / window.innerHeight, 0.1, 900);
-camera.position.set(0, 1.7, 30);
+camera.position.set(0, 1.7, 44);
 
 // =================== cinematic post-processing ===================
 // Bloom is what sells the "lit glass blazing through mist" look; the grade pass
@@ -283,17 +283,25 @@ const GradeShader = {
     uniform sampler2D tDiffuse; uniform float time; uniform float bright; uniform float tin; varying vec2 vUv;
     float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7))) * 43758.5453); }
     void main(){
-      vec3 c = texture2D(tDiffuse, vUv).rgb;
+      vec2 d = vUv - 0.5;
+      float r2 = dot(d, d);
+      // chromatic aberration creeping in toward the edges (subtle — a few px at the corner)
+      vec2 ca = d * r2 * 0.012;
+      vec3 c;
+      c.r = texture2D(tDiffuse, vUv + ca).r;
+      c.g = texture2D(tDiffuse, vUv).g;
+      c.b = texture2D(tDiffuse, vUv - ca).b;
       float l = dot(c, vec3(0.299, 0.587, 0.114));
       // lift shadows toward cold blue, push highlights toward warm ember
       c += vec3(-0.012, 0.0, 0.03) * (1.0 - l);
       c += vec3(0.03, 0.012, -0.02) * l;
+      // a gentle filmic contrast S-curve for richer blacks and snap
+      c = clamp((c - 0.5) * 1.10 + 0.5, 0.0, 8.0);
       c *= bright;                                  // tin brightens the night
       c += tin * 0.05 * vec3(0.6, 0.8, 1.0);        // tin lends a cold clarity
       // soft vignette (eases open while burning tin)
-      vec2 d = vUv - 0.5;
-      float v = smoothstep(1.1, 0.25, dot(d, d) * 4.0);
-      c *= mix(mix(0.74, 0.9, tin), 1.0, v);
+      float v = smoothstep(1.1, 0.25, r2 * 4.0);
+      c *= mix(mix(0.72, 0.9, tin), 1.0, v);
       // fine drifting ash grain
       float g = hash(vUv + fract(time * 0.21));
       c += (g - 0.5) * 0.035;
@@ -325,19 +333,62 @@ composer.addPass(new SMAAPass(window.innerWidth, window.innerHeight));
   scene.add(sky);
 }
 
+// ---- image-based lighting: a dark, moody reflection environment ----
+// The single biggest "next-gen material" upgrade: now wet cobbles, canal water,
+// copper domes and every push/pull metal catch the red horizon-glow and the cold
+// moon. Kept deliberately dark so it adds gleam, not flat brightness.
+{
+  const W = 256, H = 128;
+  const c = document.createElement('canvas'); c.width = W; c.height = H;
+  const g = c.getContext('2d')!;
+  const grd = g.createLinearGradient(0, 0, 0, H);
+  grd.addColorStop(0.00, '#05050b');   // zenith — faint cold
+  grd.addColorStop(0.46, '#0a0808');
+  grd.addColorStop(0.53, '#3c1b10');   // warm horizon band
+  grd.addColorStop(0.62, '#160d0a');
+  grd.addColorStop(1.00, '#070606');   // nadir
+  g.fillStyle = grd; g.fillRect(0, 0, W, H);
+  const sun = g.createRadialGradient(W * 0.5, H * 0.55, 0, W * 0.5, H * 0.55, W * 0.24);
+  sun.addColorStop(0, 'rgba(196,74,34,0.95)'); sun.addColorStop(1, 'rgba(196,74,34,0)');   // the palace/sun glow
+  g.fillStyle = sun; g.fillRect(0, 0, W, H);
+  const mn = g.createRadialGradient(W * 0.17, H * 0.2, 0, W * 0.17, H * 0.2, W * 0.07);
+  mn.addColorStop(0, 'rgba(150,170,215,0.85)'); mn.addColorStop(1, 'rgba(150,170,215,0)');  // the cold moon
+  g.fillStyle = mn; g.fillRect(0, 0, W, H);
+  const eqt = new THREE.CanvasTexture(c);
+  eqt.mapping = THREE.EquirectangularReflectionMapping; eqt.colorSpace = THREE.SRGBColorSpace;
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  scene.environment = pmrem.fromEquirectangular(eqt).texture;
+  eqt.dispose(); pmrem.dispose();
+}
+
+// ---- the moon, a hazy disc behind the ash, motivating the moonlight & its shadows ----
+{
+  const halo = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: softSprite('rgba(150,170,210,0.6)'), transparent: true, opacity: 0.55,
+    depthWrite: false, fog: false, blending: THREE.AdditiveBlending,
+  }));
+  halo.scale.set(150, 150, 1); halo.position.set(-150, 285, 150); scene.add(halo);
+  const disc = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: softSprite('rgba(206,218,242,0.98)'), transparent: true, opacity: 0.92,
+    depthWrite: false, fog: false, blending: THREE.AdditiveBlending,
+  }));
+  disc.scale.set(44, 44, 1); disc.position.set(-150, 285, 150); scene.add(disc);
+}
+
 // =================== lighting ===================
 scene.add(new THREE.HemisphereLight(0x3a2418, 0x0a0808, 0.8));
 scene.add(new THREE.AmbientLight(0x171009, 0.55));   // lift the deep shadows just off black
-const moon = new THREE.DirectionalLight(0x8a93c4, 0.7);
-moon.position.set(-46, 86, 34);
-moon.target.position.set(0, 0, -8);
+const moon = new THREE.DirectionalLight(0x8a93c4, 0.72);
+const MOON_OFF = new THREE.Vector3(-46, 86, 34);     // fixed offset; the shadow rig chases the player each frame
+moon.position.copy(MOON_OFF);
+moon.target.position.set(0, 0, 0);
 scene.add(moon.target);
-moon.castShadow = SHADOWS;                            // the one shadow-caster over the district
-moon.shadow.mapSize.set(1024, 1024);                 // balanced; press \ to disable on weak GPUs
-moon.shadow.camera.near = 20;
-moon.shadow.camera.far = 260;
-moon.shadow.camera.left = -95; moon.shadow.camera.right = 95;
-moon.shadow.camera.top = 95; moon.shadow.camera.bottom = -95;
+moon.castShadow = SHADOWS;                            // the one shadow-caster; its tight frustum tracks the player
+moon.shadow.mapSize.set(SHADOWS ? 2048 : 1024, SHADOWS ? 2048 : 1024); // crisp over the tracked area; press \ to disable
+moon.shadow.camera.near = 30;
+moon.shadow.camera.far = 230;
+moon.shadow.camera.left = -62; moon.shadow.camera.right = 62;
+moon.shadow.camera.top = 62; moon.shadow.camera.bottom = -62;
 moon.shadow.bias = -0.0004;
 moon.shadow.normalBias = 0.7;
 scene.add(moon);
@@ -359,30 +410,74 @@ const addMetal = (x: number, y: number, z: number, r = 1) =>
 type Roof = { minX: number; maxX: number; minZ: number; maxZ: number; top: number };
 const ROOFS: Roof[] = [];
 
-// warm pools of lantern light — placed along the streets once the district exists
-const lampGlow = softSprite('rgba(255,182,92,0.9)');
+// Lantern light. LORE: Luthadel in the Final Empire (Mistborn Era 1) has NO
+// electricity — every street light is an OPEN FLAME in an iron-bracketed lantern
+// (electric lighting only arrives in Era 2, the Wax & Wayne books). So the glow is
+// warm orange firelight, never a steady white bulb. Posts + additive halos are cheap,
+// so we place them at every intersection; real PointLights are costly in forward
+// rendering, so a small fixed POOL of flame-lights binds each frame to the nearest
+// lamps, and a matching pool of dancing flame sprites lights the closest few.
+const lampGlow = softSprite('rgba(255,150,66,0.9)');
+const flameTex = softSprite('rgba(255,172,82,1)');
 const lampPostMat = new THREE.MeshStandardMaterial({ color: 0x100c08, roughness: 1, metalness: 0 });
-// Posts + glowing halos are cheap, so place them densely; real PointLights are
-// costly in forward rendering, so only `lit` lamps emit one (perf on weak GPUs).
-function placeLamp(lx: number, lz: number, lit = true) {
-  if (lit) {
-    const pl = new THREE.PointLight(0xffb259, 36, 32, 2);
-    pl.position.set(lx, 4.4, lz); scene.add(pl);
-  }
-  const halo = new THREE.Sprite(new THREE.SpriteMaterial({
-    map: lampGlow, transparent: true, opacity: lit ? 0.85 : 0.5, depthWrite: false, blending: THREE.AdditiveBlending,
+const lampPostGeo = new THREE.CylinderGeometry(0.1, 0.16, 4.6, 6);
+const lampHaloMat = new THREE.SpriteMaterial({ map: lampGlow, transparent: true, opacity: 0.6, depthWrite: false, blending: THREE.AdditiveBlending });
+type Lamp = { x: number; z: number };
+const lamps: Lamp[] = [];
+function placeLamp(lx: number, lz: number) {
+  const halo = new THREE.Sprite(lampHaloMat);
+  halo.scale.set(2.1, 2.1, 1); halo.position.set(lx, 4.5, lz); scene.add(halo);
+  const post = new THREE.Mesh(lampPostGeo, lampPostMat);
+  post.position.set(lx, 2.3, lz); scene.add(post);
+  addMetal(lx, 4.3, lz, 1.6); // the lantern's heavy iron bracket — a push/pull anchor
+  lamps.push({ x: lx, z: lz });
+}
+// a fixed pool of real flame-lights that chase the player, and a matching pool of
+// guttering flame sprites for the nearest lamps (the unmistakable "it's fire" tell)
+const LAMP_LIGHTS = 9;
+const lampPool: THREE.PointLight[] = [];
+const flamePool: THREE.Sprite[] = [];
+for (let i = 0; i < LAMP_LIGHTS; i++) {
+  const pl = new THREE.PointLight(0xff9a3c, 0, 28, 2);
+  pl.castShadow = false; scene.add(pl); lampPool.push(pl);
+  const fs = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: flameTex, transparent: true, opacity: 0.9, depthWrite: false, blending: THREE.AdditiveBlending, color: 0xffa848,
   }));
-  halo.scale.set(lit ? 2.4 : 1.7, lit ? 2.4 : 1.7, 1); halo.position.set(lx, 4.4, lz); scene.add(halo);
-  const post = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.16, 4.4, 6), lampPostMat);
-  post.position.set(lx, 2.2, lz); scene.add(post);
-  addMetal(lx, 4.2, lz, 1.6); // the lantern's heavy iron bracket
+  fs.scale.set(0.55, 1.0, 1); fs.visible = false; scene.add(fs); flamePool.push(fs);
+}
+
+// ---- volumetric light shafts (god-rays) ----
+// A soft cone of glowing haze hangs under each lamp; like the real lights, only a
+// pool of them exists and they chase the nearest lamps. Additive, brightest at the
+// lantern and fading down + radially — cheap, but it sells the mist drinking light.
+function makeShaftMat(hex: number, half: number, strength: number) {
+  return new THREE.ShaderMaterial({
+    uniforms: { uColor: { value: new THREE.Color(hex) }, uHalf: { value: half }, uStr: { value: strength } },
+    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+    vertexShader: 'varying vec3 vP; void main(){ vP = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
+    fragmentShader: `uniform vec3 uColor; uniform float uHalf; uniform float uStr; varying vec3 vP;
+      void main(){
+        float vert = clamp((vP.y + uHalf) / (2.0 * uHalf), 0.0, 1.0);     // 1 at the lantern, 0 at the cobbles
+        float rad = clamp(length(vP.xz) / uHalf, 0.0, 1.0);
+        gl_FragColor = vec4(uColor, pow(vert, 1.3) * (1.0 - rad) * uStr);
+      }`,
+  });
+}
+const SHAFTS = 6;
+const shaftMat = makeShaftMat(0xffc070, 2.25, 0.4);
+const shaftGeo = new THREE.ConeGeometry(1.7, 4.5, 12, 1, true);
+const shaftPool: THREE.Mesh[] = [];
+for (let i = 0; i < SHAFTS; i++) {
+  const s = new THREE.Mesh(shaftGeo, shaftMat);
+  s.userData.noShadow = true; s.visible = false; scene.add(s); shaftPool.push(s);
 }
 
 // =================== ground ===================
 {
   const cob = cobbleSet();
+  for (const t of [cob.map, cob.normalMap, cob.roughnessMap]) t.repeat.set(96, 96);  // keep stone scale on the bigger plane
   const ground = new THREE.Mesh(
-    new THREE.PlaneGeometry(500, 500),
+    new THREE.PlaneGeometry(760, 760),
     new THREE.MeshStandardMaterial({
       map: cob.map, normalMap: cob.normalMap, roughnessMap: cob.roughnessMap,
       normalScale: new THREE.Vector2(0.6, 0.6),
@@ -395,78 +490,138 @@ function placeLamp(lx: number, lz: number, lit = true) {
 
 // =================== buildings (the street) ===================
 const roofMat = new THREE.MeshStandardMaterial({ color: 0x130d07, roughness: 1, metalness: 0, side: THREE.DoubleSide });
+const tileRoofMat = new THREE.MeshStandardMaterial({ color: 0x281009, roughness: 0.85, metalness: 0, side: THREE.DoubleSide }); // fired-clay tile, the wealthier rows
 const trimMat = new THREE.MeshStandardMaterial({ color: 0x0c0906, roughness: 1, metalness: 0 });
 const spireMat = new THREE.MeshStandardMaterial({ color: 0x09060b, roughness: 1, metalness: 0 });
+const domeMat = new THREE.MeshStandardMaterial({ color: 0x0b0b12, roughness: 0.7, metalness: 0.15 });
 // pre-bake a few façade material sets and reuse them across the district (cheap)
 const tenPool = Array.from({ length: 6 }, () => facadeSet(8, 10, false));
-const keepPool = Array.from({ length: 5 }, () => facadeSet(12, 22, true));
+const keepPool = Array.from({ length: 6 }, () => facadeSet(12, 22, true));
 const pickMat = (a: THREE.Material[][]) => a[(Math.random() * a.length) | 0];
 
-function placeBuilding(cx: number, cz: number, w: number, d: number, h: number, isKeep: boolean) {
-  const yaw = rand(-0.035, 0.035);
+// Every keep's crowning spires are collected here and later drawn as ONE instanced mesh —
+// hundreds of spear-tips across the whole skyline for the cost of a single draw call.
+type Spire = { x: number; y: number; z: number; r: number; h: number; rz: number };
+const spireInst: Spire[] = [];
+
+// place one building into `parent` (a per-block Group, so whole blocks can be culled at distance)
+function placeBuilding(parent: THREE.Object3D, cx: number, cz: number, w: number, d: number, h: number, isKeep: boolean) {
+  const yaw = rand(-0.03, 0.03);
   const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), pickMat(isKeep ? keepPool : tenPool));
-  mesh.position.set(cx, h / 2, cz); mesh.rotation.y = yaw; scene.add(mesh);
+  mesh.position.set(cx, h / 2, cz); mesh.rotation.y = yaw; parent.add(mesh);
   ROOFS.push({ minX: cx - w / 2, maxX: cx + w / 2, minZ: cz - d / 2, maxZ: cz + d / 2, top: h });
 
   const cor = new THREE.Mesh(new THREE.BoxGeometry(w + 0.7, 0.7, d + 0.7), trimMat);
-  cor.position.set(cx, h - 0.3, cz); cor.rotation.y = yaw; scene.add(cor);
+  cor.position.set(cx, h - 0.3, cz); cor.rotation.y = yaw; parent.add(cor);
 
   if (isKeep) {
-    const ns = 4 + (Math.random() * 4 | 0);
-    for (let s = 0; s < ns; s++) {
-      const sh = rand(3, 7), sr = rand(0.3, 0.6);
-      const spike = new THREE.Mesh(new THREE.ConeGeometry(sr, sh, 4), spireMat);
-      spike.position.set(cx + rand(-w / 2 + 0.7, w / 2 - 0.7), h + sh / 2, cz + rand(-d / 2 + 0.7, d / 2 - 0.7));
-      scene.add(spike);
+    const crown = Math.random();
+    if (crown < 0.55) {                                   // a cluster of spires
+      const ns = 3 + (Math.random() * 4 | 0);
+      for (let s = 0; s < ns; s++)
+        spireInst.push({ x: cx + rand(-w / 2 + 0.8, w / 2 - 0.8), y: h, z: cz + rand(-d / 2 + 0.8, d / 2 - 0.8), r: rand(0.3, 0.6), h: rand(3, 7), rz: rand(-0.06, 0.06) });
+      spireInst.push({ x: cx, y: h, z: cz, r: rand(0.5, 0.9), h: rand(7, 12), rz: 0 });
+    } else if (crown < 0.8) {                             // a great dome
+      const dr = Math.min(w, d) * 0.42;
+      const dome = new THREE.Mesh(new THREE.SphereGeometry(dr, 14, 9, 0, Math.PI * 2, 0, Math.PI / 2), domeMat);
+      dome.position.set(cx, h, cz); parent.add(dome);
+      spireInst.push({ x: cx, y: h + dr, z: cz, r: 0.4, h: rand(4, 7), rz: 0 });
+    } else {                                              // a square watch-tower
+      const th = rand(6, 12);
+      const tw = new THREE.Mesh(new THREE.BoxGeometry(w * 0.42, th, d * 0.42), pickMat(keepPool));
+      tw.position.set(cx, h + th / 2, cz); parent.add(tw);
+      ROOFS.push({ minX: cx - w * 0.21, maxX: cx + w * 0.21, minZ: cz - d * 0.21, maxZ: cz + d * 0.21, top: h + th });
+      spireInst.push({ x: cx, y: h + th, z: cz, r: 0.5, h: rand(4, 7), rz: 0 });
     }
-    const csh = rand(7, 12);
-    const cspike = new THREE.Mesh(new THREE.ConeGeometry(rand(0.5, 0.9), csh, 4), spireMat);
-    cspike.position.set(cx, h + csh / 2, cz); scene.add(cspike);
   } else {
-    const roof = new THREE.Mesh(gableRoof(w + 0.5, d + 0.6, rand(1.6, 2.8)), roofMat);
-    roof.position.set(cx, h, cz); roof.rotation.y = yaw; scene.add(roof);
+    const tile = Math.random() < 0.25;
+    const roof = new THREE.Mesh(gableRoof(w + 0.5, d + 0.6, rand(1.6, 2.8)), tile ? tileRoofMat : roofMat);
+    roof.position.set(cx, h, cz); roof.rotation.y = yaw; parent.add(roof);
+    if (Math.random() < 0.6) {                            // a soot-caked chimney
+      const ch = new THREE.Mesh(new THREE.BoxGeometry(0.55, rand(1.2, 2.4), 0.55), trimMat);
+      ch.position.set(cx + rand(-w / 3, w / 3), h + 1.1, cz + rand(-d / 3, d / 3)); parent.add(ch);
+    }
   }
 
-  // metals: door fittings on both street faces, barred windows, a rooftop vent
+  // metals: door fittings on both street faces, barred windows, a rooftop bracket
   addMetal(cx - w / 2, 1.5, cz + rand(-d / 3, d / 3), 1.0);
   addMetal(cx + w / 2, 1.5, cz + rand(-d / 3, d / 3), 1.0);
-  for (let b = 0; b < (isKeep ? 3 : 2); b++) {
+  for (let b = 0; b < (isKeep ? 3 : 2); b++)
     addMetal(cx + (Math.random() < 0.5 ? -1 : 1) * w / 2, rand(3, h - 2), cz + rand(-d / 2.5, d / 2.5), isKeep ? 1.1 : 0.8);
-  }
   addMetal(cx + rand(-w / 3, w / 3), h + 0.3, cz + rand(-d / 3, d / 3), 1.3);
 }
 
 // fill a city block with a 1–2 × 1–2 cluster of packed buildings
-function fillBlock(x0: number, x1: number, z0: number, z1: number, keepChance: number) {
-  const bw = x1 - x0, bd = z1 - z0, gap = 1.3;
-  const nx = bw > 15 ? 2 : 1, nz = bd > 15 ? 2 : 1;
+function fillBlock(parent: THREE.Object3D, x0: number, x1: number, z0: number, z1: number, keepChance: number, tall: number) {
+  const bw = x1 - x0, bd = z1 - z0, gap = 1.4;
+  const nx = bw > 14 ? 2 : 1, nz = bd > 14 ? 2 : 1;
   const cwid = (bw - gap * (nx - 1)) / nx, cdep = (bd - gap * (nz - 1)) / nz;
   for (let i = 0; i < nx; i++) for (let j = 0; j < nz; j++) {
+    if (Math.random() < 0.07) continue;                  // an occasional empty/ruined lot
     const isKeep = Math.random() < keepChance;
-    const inset = rand(0.3, 1.1);
+    const inset = rand(0.3, 1.0);
     const w = Math.max(4, cwid - inset * 2), d = Math.max(4, cdep - inset * 2);
-    const h = isKeep ? rand(16, 26) : rand(7, 12);
-    placeBuilding(x0 + i * (cwid + gap) + cwid / 2, z0 + j * (cdep + gap) + cdep / 2, w, d, h, isKeep);
+    const h = isKeep ? rand(16, 26) * tall : rand(7, 12);
+    placeBuilding(parent, x0 + i * (cwid + gap) + cwid / 2, z0 + j * (cdep + gap) + cdep / 2, w, d, h, isKeep);
   }
 }
 
-// ---- the walled district: a grid of blocks, the main avenue (x≈0) runs to the palace ----
-const XW = 42, ZB = 46, ZF = -62;        // district half-width, back (+Z), front (−Z)
-const xBlocks: [number, number][] = [[-42, -32], [-23, -6], [6, 23], [32, 42]];
-const zBlocks: [number, number][] = [[29, 46], [-3, 20], [-35, -12], [-62, -45]];
-const MKT_XI = 2, MKT_ZI = 1;            // this block is left open as the market square
-const BALL_XI = 1, BALL_ZI = 1;          // this block holds the grand "ball" keep
-for (let xi = 0; xi < xBlocks.length; xi++) for (let zi = 0; zi < zBlocks.length; zi++) {
-  if (xi === MKT_XI && zi === MKT_ZI) continue;
-  if (xi === BALL_XI && zi === BALL_ZI) continue;
-  const keepChance = (zi >= 1 && xi >= 1 && xi <= 2) ? 0.28 : 0.12; // keeps cluster centre/front
-  fillBlock(xBlocks[xi][0], xBlocks[xi][1], zBlocks[zi][0], zBlocks[zi][1], keepChance);
+// ---- the walled district: a parametric grid that scales to a whole city ----
+// Columns march out to either side of a central avenue (x≈0) that runs to the gate;
+// rows march from the back wall (+Z) toward the gate and Kredik Shaw (−Z).
+const BW = 18, BD = 18, ST = 9, AV = 20, COLS = 4, ROWS = 8;
+const FRONT_Z = -150;                                    // z of the front-most row of blocks
+const colCenters: [number, number][] = [];              // [x0,x1] per block column (the avenue is the central gap)
+for (const side of [-1, 1] as const)
+  for (let i = 0; i < COLS; i++) {
+    const c = side * (AV / 2 + BW / 2 + i * (BW + ST));
+    colCenters.push([c - BW / 2, c + BW / 2]);
+  }
+const rowCenters: [number, number][] = [];              // [z0,z1] per block row, back(+Z) → front(−Z)
+for (let r = 0; r < ROWS; r++) {
+  const c = FRONT_Z + (ROWS - 1 - r) * (BD + ST);
+  rowCenters.push([c - BD / 2, c + BD / 2]);
+}
+const maxXedge = AV / 2 + BW / 2 + (COLS - 1) * (BW + ST) + BW / 2;
+const XW = maxXedge + 8;                                 // district half-width (+ a perimeter lane)
+const ZB = rowCenters[0][1] + 8;                         // back wall (+Z)
+const ZF = rowCenters[ROWS - 1][0] - 8;                  // front wall / gate (−Z)
+
+// reserved blocks become landmarks instead of generic rows
+const ci = (side: -1 | 1, i: number) => (side < 0 ? i : COLS + i);   // column-index helper
+const MKT_B: [number, number] = [ci(1, 0), 2];          // market square (right, near back)
+const PLAZA_B: [number, number] = [ci(-1, 0), 5];       // the Lord Ruler's plaza (left, mid)
+const BALL_B: [number, number] = [ci(-1, 0), ROWS - 2]; // the noble-ball keep (left, front)
+const MIN_B: [number, number] = [ci(1, 0), ROWS - 1];   // the Ministry cathedral (right, by the gate)
+const CLUBS_B: [number, number] = [ci(-1, 1), 4];       // Clubs' shop (left, mid)
+const reserved = new Set([MKT_B, PLAZA_B, BALL_B, MIN_B, CLUBS_B].map(b => b[0] + ',' + b[1]));
+const centerOf = (b: [number, number]) => {
+  const [x0, x1] = colCenters[b[0]], [z0, z1] = rowCenters[b[1]];
+  return new THREE.Vector3((x0 + x1) / 2, 0, (z0 + z1) / 2);
+};
+
+// each block is its own Group so distant blocks can be hidden wholesale — the city can be
+// huge while the draw-call count stays bounded to whatever's near the player.
+const blockGroups: { g: THREE.Group; cx: number; cz: number }[] = [];
+for (let c = 0; c < colCenters.length; c++) {
+  for (let r = 0; r < rowCenters.length; r++) {
+    if (reserved.has(c + ',' + r)) continue;
+    const [x0, x1] = colCenters[c], [z0, z1] = rowCenters[r];
+    const nearAvenue = (c % COLS) <= 1;
+    const towardPalace = r >= ROWS - 4;
+    const keepChance = (nearAvenue ? 0.30 : 0.10) + (towardPalace ? 0.12 : 0); // wealth gathers by the avenue & the palace
+    const tall = towardPalace ? rand(1.05, 1.3) : 1.0;
+    const g = new THREE.Group();
+    fillBlock(g, x0, x1, z0, z1, keepChance, tall);
+    scene.add(g);
+    blockGroups.push({ g, cx: (x0 + x1) / 2, cz: (z0 + z1) / 2 });
+  }
 }
 
-// the market square: canvas-roofed stalls
+// the market square: canvas-roofed stalls around a soot-blackened fountain
 {
-  const [mx0, mx1] = xBlocks[MKT_XI], [mz0, mz1] = zBlocks[MKT_ZI];
-  for (let i = 0; i < 8; i++) {
+  const [mx0, mx1] = colCenters[MKT_B[0]], [mz0, mz1] = rowCenters[MKT_B[1]];
+  for (let i = 0; i < 9; i++) {
     const sx = rand(mx0 + 1.5, mx1 - 1.5), sz = rand(mz0 + 1.5, mz1 - 1.5), sh = rand(1.8, 2.3);
     const post = new THREE.Mesh(new THREE.BoxGeometry(2.4, sh, 1.8), trimMat);
     post.position.set(sx, sh / 2, sz); scene.add(post);
@@ -474,7 +629,6 @@ for (let xi = 0; xi < xBlocks.length; xi++) for (let zi = 0; zi < zBlocks.length
     awn.position.set(sx, sh, sz); scene.add(awn);
     addMetal(sx, sh - 0.2, sz, 0.7);
   }
-  // a soot-blackened fountain at the heart of the market, its water gone dark with ash
   const fcx = (mx0 + mx1) / 2, fcz = (mz0 + mz1) / 2;
   const basin = new THREE.Mesh(new THREE.CylinderGeometry(2.2, 2.4, 0.7, 16), trimMat);
   basin.position.set(fcx, 0.35, fcz); scene.add(basin);
@@ -485,15 +639,86 @@ for (let xi = 0; xi < xBlocks.length; xi++) for (let zi = 0; zi < zBlocks.length
   spout.position.set(fcx, 1.45, fcz); scene.add(spout);
   ROOFS.push({ minX: fcx - 2.2, maxX: fcx + 2.2, minZ: fcz - 2.2, maxZ: fcz + 2.2, top: 0.7 });
   addMetal(fcx, 1.7, fcz, 1.0);
-  placeLamp((mx0 + mx1) / 2, (mz0 + mz1) / 2);
+  placeLamp(mx0 + 2, mz0 + 2); placeLamp(mx1 - 2, mz1 - 2);
+}
+
+// the Lord Ruler's plaza — an open paved square about a black obelisk
+{
+  const p = centerOf(PLAZA_B);
+  const ob = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 1.5, 10, 4), spireMat);
+  ob.position.set(p.x, 5, p.z); ob.rotation.y = Math.PI / 4; scene.add(ob);
+  ROOFS.push({ minX: p.x - 1.3, maxX: p.x + 1.3, minZ: p.z - 1.3, maxZ: p.z + 1.3, top: 10 });
+  addMetal(p.x, 6.5, p.z, 1.4);
+  for (const [ox, oz] of [[-6, -6], [6, 6], [-6, 6], [6, -6]] as const) placeLamp(p.x + ox, p.z + oz);
+}
+
+// Clubs' shop — a soot-stained workshop with a tall, smoking chimney (Kelsier's crew)
+{
+  const p = centerOf(CLUBS_B);
+  const g = new THREE.Group();
+  placeBuilding(g, p.x, p.z, 11, 12, 9, false);
+  const chim = new THREE.Mesh(new THREE.BoxGeometry(1.2, 5, 1.2), trimMat);
+  chim.position.set(p.x + 3, 11, p.z + 3.5); g.add(chim);
+  scene.add(g); blockGroups.push({ g, cx: p.x, cz: p.z });
+  const smoke = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: softSprite('rgba(120,108,92,0.5)'), transparent: true, opacity: 0.4, depthWrite: false,
+  }));
+  smoke.scale.set(6, 8, 1); smoke.position.set(p.x + 3, 16, p.z + 3.5); smoke.userData.noShadow = true; scene.add(smoke);
+  placeLamp(p.x - 5, p.z);
+}
+
+// the Ministry cathedral — a black mass of buttresses crowned by a great steeple, by the gate
+{
+  const p = centerOf(MIN_B);
+  const g = new THREE.Group();
+  placeBuilding(g, p.x, p.z, 16, 16, 30, true);
+  const steeple = new THREE.Mesh(new THREE.ConeGeometry(2.4, 30, 6), spireMat);
+  steeple.position.set(p.x, 45, p.z); g.add(steeple);
+  for (const [ox, oz] of [[-7, -7], [7, -7], [-7, 7], [7, 7]] as const) {
+    const buttress = new THREE.Mesh(new THREE.ConeGeometry(1.1, 14, 5), spireMat);
+    buttress.position.set(p.x + ox, 37, p.z + oz); g.add(buttress);
+  }
+  scene.add(g); blockGroups.push({ g, cx: p.x, cz: p.z });
+  const rose = new THREE.Sprite(new THREE.SpriteMaterial({   // a rose-window blazing on the gate-facing wall
+    map: softSprite('rgba(196,60,40,0.95)'), transparent: true, opacity: 0.9, depthWrite: false, blending: THREE.AdditiveBlending,
+  }));
+  rose.scale.set(7, 7, 1); rose.position.set(p.x, 16, p.z - 8.1); scene.add(rose);
+  addMetal(p.x, 16, p.z - 8, 1.4);
+}
+
+// a canal crossing the district, water gone black with ash, spanned by arched footbridges
+const canalZ = (rowCenters[4][0] + rowCenters[3][1]) / 2;   // sits in the street between two rows
+{
+  const cwater = new THREE.Mesh(new THREE.BoxGeometry(2 * XW - 8, 0.1, 5),
+    new THREE.MeshStandardMaterial({ color: 0x070a0c, roughness: 0.18, metalness: 0.35 }));
+  cwater.position.set(0, 0.06, canalZ); cwater.userData.noShadow = true; scene.add(cwater);
+  for (const s of [-1, 1] as const) {                        // stone embankments
+    const bank = new THREE.Mesh(new THREE.BoxGeometry(2 * XW - 8, 0.5, 0.7), trimMat);
+    bank.position.set(0, 0.25, canalZ + s * 2.8); scene.add(bank);
+  }
+  const bridgeXs = [0];
+  for (let i = 0; i < COLS - 1; i++) { const gx = AV / 2 + BW + ST / 2 + i * (BW + ST); bridgeXs.push(gx, -gx); }
+  for (const bx of bridgeXs) {
+    const span = bx === 0 ? AV - 2 : ST + 1;
+    const deck = new THREE.Mesh(new THREE.BoxGeometry(span, 0.4, 6.5), trimMat);
+    deck.position.set(bx, 1.0, canalZ); scene.add(deck);
+    ROOFS.push({ minX: bx - span / 2, maxX: bx + span / 2, minZ: canalZ - 3.25, maxZ: canalZ + 3.25, top: 1.2 });
+    const arch = new THREE.Mesh(new THREE.TorusGeometry(2.6, 0.22, 6, 12, Math.PI), spireMat);
+    arch.position.set(bx, 0.4, canalZ); arch.rotation.y = Math.PI / 2; scene.add(arch);
+    addMetal(bx, 1.2, canalZ, 0.9);
+  }
+  placeLamp(AV / 2 + 2, canalZ); placeLamp(-(AV / 2 + 2), canalZ);
 }
 
 // a noble ball glimpsed through a keep's grand windows, off the avenue
 const ballDancers: { m: THREE.Group; z0: number; ph: number }[] = [];
 {
-  const bx = -13, bz = 8;
-  placeBuilding(bx, bz, 13, 15, 26, true);          // the grand keep
-  const faceX = bx + 13 / 2 + 0.06;                  // its avenue-facing wall
+  const bc = centerOf(BALL_B);
+  const bx = bc.x, bz = bc.z, bw = 13;
+  const bg = new THREE.Group();
+  placeBuilding(bg, bx, bz, bw, 15, 26, true);       // the grand keep
+  scene.add(bg); blockGroups.push({ g: bg, cx: bx, cz: bz });
+  const faceX = bx + bw / 2 + 0.06;                  // its avenue-facing wall (+X)
   const win = new THREE.Mesh(new THREE.PlaneGeometry(8, 9), new THREE.MeshBasicMaterial({ color: 0xd1a052 }));
   win.position.set(faceX, 7.5, bz); win.rotation.y = Math.PI / 2; win.userData.noShadow = true; scene.add(win);
   const lead = new THREE.MeshBasicMaterial({ color: 0x0a0806 });
@@ -515,30 +740,52 @@ const ballDancers: { m: THREE.Group; z0: number; ph: number }[] = [];
   addMetal(faceX, 2, bz, 1.0);                        // a door fitting below the hall
 }
 
-// the city wall rings the district; a gate on the avenue opens toward Kredik Shaw
+// the city wall rings the district; the gate on the avenue opens toward Kredik Shaw
 {
   const wallMat = new THREE.MeshStandardMaterial({ color: 0x0c0a08, roughness: 1, metalness: 0 });
-  const WH = 15, WT = 3.5;
+  const WH = 16, WT = 4;
   const seg = (cx: number, cz: number, lx: number, lz: number, hh = WH) => {
     const m = new THREE.Mesh(new THREE.BoxGeometry(lx, hh, lz), wallMat);
     m.position.set(cx, hh / 2, cz); scene.add(m);
     ROOFS.push({ minX: cx - lx / 2, maxX: cx + lx / 2, minZ: cz - lz / 2, maxZ: cz + lz / 2, top: hh });
   };
-  seg(0, ZB + 2, 2 * XW + 8, WT);                  // back wall (+Z)
-  seg(-XW - 2, (ZB + ZF) / 2, WT, ZB - ZF + 8);    // left wall
-  seg(XW + 2, (ZB + ZF) / 2, WT, ZB - ZF + 8);     // right wall
-  seg(-25.5, ZF - 2, 37, WT);                      // front wall, left of gate
-  seg(25.5, ZF - 2, 37, WT);                       // front wall, right of gate
-  for (const gx of [-7, 7] as const) {             // gate towers flanking the avenue
-    seg(gx, ZF - 2, 4, 5, WH + 7);
-    addMetal(gx + (gx < 0 ? 1.6 : -1.6), 6, ZF - 1, 1.5); // gate ironwork
+  seg(0, ZB + 2, 2 * XW + 2 * WT, WT);                       // back wall (+Z)
+  seg(-XW - WT / 2, (ZB + ZF) / 2, WT, ZB - ZF);            // left wall
+  seg(XW + WT / 2, (ZB + ZF) / 2, WT, ZB - ZF);            // right wall
+  const gateHalf = AV / 2 + 1;                               // the gate gap straddles the avenue
+  const frontHalf = (XW - gateHalf) / 2;
+  seg(-(gateHalf + frontHalf), ZF - 2, 2 * frontHalf, WT);   // front wall, left of gate
+  seg(gateHalf + frontHalf, ZF - 2, 2 * frontHalf, WT);      // front wall, right of gate
+  for (const gx of [-(gateHalf + 1.5), gateHalf + 1.5]) {    // gate towers flanking the avenue
+    seg(gx, ZF - 2, 5, 6, WH + 8);
+    addMetal(gx + (gx < 0 ? 2 : -2), 7, ZF - 1, 1.6);        // gate ironwork
   }
+  for (const [cx, cz] of [[-XW, ZB], [XW, ZB], [-XW, ZF], [XW, ZF]] as const)  // corner watch-towers
+    seg(cx, cz, 7, 7, WH + 10);
 }
 
-// lamp posts line the avenue & cross-streets; only every other one is lit (perf)
-let _li = 0;
-for (let z = 40; z > ZF + 4; z -= 11) placeLamp(z % 22 < 11 ? -4.2 : 4.2, z, (_li++ & 1) === 0);
-for (const cz of [24.5, -7.5, -40] as const) for (const lx of [-27, 27] as const) placeLamp(lx, cz, (_li++ & 1) === 0);
+// the red glow of Kredik Shaw spilling through the gate as a great column of hazy light
+{
+  const gate = new THREE.Mesh(new THREE.ConeGeometry(7, 28, 18, 1, true), makeShaftMat(0xc24a22, 14, 0.26));
+  gate.position.set(0, 14, ZF + 7); gate.userData.noShadow = true; scene.add(gate);
+}
+
+// lamp posts at every street intersection across the district, plus a grand line down
+// the avenue. Posts + halos are cheap & always shown; the light pool (above) chases you.
+{
+  const streetXs = [0];
+  for (let i = 0; i < COLS - 1; i++) { const gx = AV / 2 + BW + ST / 2 + i * (BW + ST); streetXs.push(gx, -gx); }
+  const streetZs: number[] = [];
+  for (let r = 0; r < ROWS - 1; r++) streetZs.push((rowCenters[r][0] + rowCenters[r + 1][1]) / 2);
+  for (const sx of streetXs) for (const sz of streetZs) {
+    if (Math.abs(sz - canalZ) < 4) continue;               // the canal already lit its own crossing
+    placeLamp(sx, sz);
+  }
+  for (let r = 0; r < ROWS; r++) {                          // a processional line of lamps up the avenue
+    const z = (rowCenters[r][0] + rowCenters[r][1]) / 2;
+    placeLamp(AV / 2 - 1.5, z); placeLamp(-(AV / 2 - 1.5), z);
+  }
+}
 
 // =================== coins on the cobbles ===================
 // Loose clips and bits of metal in the gutters — the Mistborn's launch pads.
@@ -547,7 +794,7 @@ for (const cz of [24.5, -7.5, -40] as const) for (const lx of [-27, 27] as const
   const inBuilding = (x: number, z: number) =>
     ROOFS.some(r => x > r.minX - 0.4 && x < r.maxX + 0.4 && z > r.minZ - 0.4 && z < r.maxZ + 0.4);
   let placed = 0, tries = 0;
-  while (placed < 46 && tries < 800) {
+  while (placed < 90 && tries < 2200) {
     tries++;
     const x = rand(-XW + 2, XW - 2), z = rand(ZF + 2, ZB - 2);
     if (inBuilding(x, z)) continue;
@@ -560,10 +807,43 @@ for (const cz of [24.5, -7.5, -40] as const) for (const lx of [-27, 27] as const
   }
 }
 
+// =================== every keep's spires, as ONE instanced mesh (a single draw call) ===================
+if (spireInst.length) {
+  const inst = new THREE.InstancedMesh(new THREE.ConeGeometry(1, 1, 4), spireMat, spireInst.length);
+  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), p = new THREE.Vector3(), s = new THREE.Vector3();
+  for (let i = 0; i < spireInst.length; i++) {
+    const sp = spireInst[i];
+    e.set(0, 0, sp.rz); q.setFromEuler(e);
+    s.set(sp.r, sp.h, sp.r); p.set(sp.x, sp.y + sp.h / 2, sp.z);
+    inst.setMatrixAt(i, m.compose(p, q, s));
+  }
+  inst.instanceMatrix.needsUpdate = true;
+  scene.add(inst);
+}
+
+// =================== a fogged skyline of the city sprawling beyond the walls ===================
+{
+  const mat = new THREE.MeshStandardMaterial({ color: 0x09070a, roughness: 1, metalness: 0 });
+  const N = 150;
+  const inst = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), mat, N);
+  inst.userData.noShadow = true;
+  const m = new THREE.Matrix4(); let k = 0;
+  const put = (x: number, z: number) => {
+    const w = rand(7, 18), h = rand(8, 34), d = rand(7, 18);
+    m.makeScale(w, h, d); m.setPosition(x, h / 2, z); inst.setMatrixAt(k++, m);
+  };
+  for (let i = 0; i < 55; i++) put(rand(-XW - 95, -XW - 12), rand(ZF - 30, ZB + 40)); // beyond the left wall
+  for (let i = 0; i < 55; i++) put(rand(XW + 12, XW + 95), rand(ZF - 30, ZB + 40));   // beyond the right wall
+  for (let i = 0; i < 40; i++) put(rand(-XW - 20, XW + 20), rand(ZB + 12, ZB + 95));  // beyond the back wall
+  inst.count = k; inst.instanceMatrix.needsUpdate = true;
+  scene.add(inst);
+}
+
 // =================== Kredik Shaw + the red sun on the horizon ===================
 {
   const grp = new THREE.Group();
-  const black = new THREE.MeshStandardMaterial({ color: 0x040308, roughness: 1, metalness: 0 });
+  // fog:false so the black spires loom crisp against the red horizon-glow — "black spears thrust into the sky"
+  const black = new THREE.MeshStandardMaterial({ color: 0x040308, roughness: 1, metalness: 0, fog: false });
 
   // a broad palace base mass beneath the spires
   const base = new THREE.Mesh(new THREE.BoxGeometry(150, 44, 70), black);
@@ -654,57 +934,100 @@ const ash = new THREE.Points(ashGeo, new THREE.PointsMaterial({
 ash.frustumCulled = false;
 scene.add(ash);
 
+// =================== warm embers drifting up from the forges & lamps ===================
+const EMB_N = 420, EFIELD = 55;
+const embPos = new Float32Array(EMB_N * 3);
+const embRise = new Float32Array(EMB_N);
+const embPh = new Float32Array(EMB_N);
+for (let i = 0; i < EMB_N; i++) {
+  embPos[i * 3] = rand(-EFIELD, EFIELD);
+  embPos[i * 3 + 1] = rand(0, 18);
+  embPos[i * 3 + 2] = rand(-EFIELD, EFIELD);
+  embRise[i] = rand(0.25, 0.9);
+  embPh[i] = rand(0, Math.PI * 2);
+}
+const embGeo = new THREE.BufferGeometry();
+embGeo.setAttribute('position', new THREE.BufferAttribute(embPos, 3));
+const embers = new THREE.Points(embGeo, new THREE.PointsMaterial({
+  size: 0.14, map: softSprite('rgba(255,150,70,1)'), transparent: true,
+  opacity: 0.85, depthWrite: false, sizeAttenuation: true, blending: THREE.AdditiveBlending,
+}));
+embers.frustumCulled = false;
+scene.add(embers);
+
 // =================== drifting mist banks ===================
 // Low coiling mist that thickens the street and drinks the lamplight.
 const mistTex = mistPuff();
 const mists: THREE.Sprite[] = [];
-for (let i = 0; i < 70; i++) {
+const MFIELD = 60;   // mist is a local bank that wraps around the player (see the loop)
+for (let i = 0; i < 80; i++) {
   const op0 = rand(0.1, 0.26);
   const s = new THREE.Sprite(new THREE.SpriteMaterial({
     map: mistTex, transparent: true, opacity: op0, depthWrite: false,
     color: 0xb7b1a4, blending: THREE.NormalBlending,
   }));
-  const sc = rand(10, 24);
+  const sc = rand(12, 28);
   s.scale.set(sc, sc * rand(0.45, 0.62), 1);
-  s.position.set(rand(-XW + 4, XW - 4), rand(0.5, 4.4), rand(ZF + 4, ZB - 4));
+  s.position.set(rand(-MFIELD, MFIELD), rand(0.5, 5), rand(-MFIELD, MFIELD));
   s.material.rotation = rand(0, Math.PI * 2);
-  s.userData = { dx: rand(-0.28, 0.28), dz: rand(-0.22, 0.22), x0: s.position.x, rot: rand(-0.05, 0.05), bob: rand(0, 6), op0 };
+  s.userData = { dx: rand(-0.3, 0.3), dz: rand(-0.24, 0.24), rot: rand(-0.05, 0.05), bob: rand(0, 6), op0 };
   scene.add(s);
   mists.push(s);
 }
 
 // =================== points of interest (original lore) ===================
 type POI = { pos: THREE.Vector3; title: string; body: string };
+const marketC = centerOf(MKT_B), plazaC = centerOf(PLAZA_B), ballC = centerOf(BALL_B), minC = centerOf(MIN_B), clubsC = centerOf(CLUBS_B);
 const POIS: POI[] = [
   {
-    pos: new THREE.Vector3(4.8, 1.6, 6),
-    title: 'A Noble Keep',
-    body: 'A keep of one of the Great Houses. Behind walls of soot-darkened stone, the nobility dance beneath windows of colored glass — reds and golds spilling onto the cobbles like jewels no skaa will ever hold. Up there, ash is a rumor swept from the balconies by servants. Down here in the street, it is simply the weather.',
+    pos: new THREE.Vector3(ballC.x + 9, 1.6, ballC.z),
+    title: 'A Noble Ball',
+    body: 'Keep Tellund blazes tonight. Through its towering windows the high nobility turn in their slow, glittering dances — silk and jewels, masks and wineglasses, a whole brilliant world sealed behind colored glass. Out in the street a skaa pauses in the falling ash to watch the silhouettes spin, then hurries on before a house guard marks the loitering.',
   },
   {
-    pos: new THREE.Vector3(-4.6, 1.6, 30),
-    title: 'Skaa Tenements',
-    body: 'The skaa quarters. Hundreds sleep stacked in these crumbling rows, roused before the red dawn to feed the forges and the canals. They keep their eyes low, their voices lower, and their hopes quieter still. In the Final Empire, to survive is to go unnoticed by it.',
-  },
-  {
-    pos: new THREE.Vector3(5.6, 1.6, 10),
+    pos: new THREE.Vector3(marketC.x, 1.6, marketC.z + 5),
     title: 'The Market',
     body: 'By day this square clatters with barrows of ash-grimed turnips and cheap tin, skaa hawking their wares beneath the watchful eyes of the Ministry. By night the stalls stand abandoned, canvas awnings sagging with soot, and only the boldest cutpurse lingers once the mist begins to climb the cobbles.',
   },
   {
-    pos: new THREE.Vector3(-4.6, 1.6, -22),
-    title: 'The Mists',
-    body: 'Nightfall, and the mists rise. They coil between the houses and drink the lamplight, and behind every barred door the skaa whisper the old fear — that things move out here when the world goes white. Yet a rare few walk willingly into the mist, and find that it does not harm them at all. It waits for them.',
+    pos: new THREE.Vector3(plazaC.x, 1.6, plazaC.z + 6),
+    title: "The Lord Ruler's Plaza",
+    body: 'An open square paved in black stone, and at its heart an obelisk thrust at the sky like an accusing finger. The skaa cross it quickly, eyes down: it is said the Steel Ministry counts the faces that linger here too long. The Lord Ruler does not need statues of himself. The whole of Luthadel is his monument.',
   },
   {
-    pos: new THREE.Vector3(0, 1.6, -57),
+    pos: new THREE.Vector3(clubsC.x + 7, 1.6, clubsC.z),
+    title: "Clubs' Shop",
+    body: 'A soot-stained workshop, no different to look at than a hundred others — a carpenter takes commissions here, and the smoke from his chimney never quite stops. But the lamps burn late behind those shutters, and the figures who slip in after dark are not here for cabinetry. Some crews plan a robbery. This one, they whisper, plans the impossible.',
+  },
+  {
+    pos: new THREE.Vector3(minC.x - 9, 1.6, minC.z - 5),
+    title: 'The Steel Ministry',
+    body: 'The cathedral of the Final Empire rears black against the gate, its steeple a spear among spires. Within, the obligators keep their ledgers of every birth, bargain, and breath in Luthadel; and somewhere below, the Inquisitors wait, spikes of steel driven through their eyes, who can smell an Allomancer on the wind. Hurry past. Do not burn metal here.',
+  },
+  {
+    pos: new THREE.Vector3(AV / 2 + 3, 1.6, canalZ + 4),
+    title: 'The Ashen Canal',
+    body: 'Water once ran clear through the city; now the canals lie black and still beneath a skin of ash, and the skaa haul their barges by lantern through the dark. A bridge arches overhead, slick with soot. Lean over the rail and the water gives you back nothing — no reflection, no moon, only the red smear of a distant fire and your own shadow.',
+  },
+  {
+    pos: new THREE.Vector3(0, 1.6, ZF + 4),
     title: 'The City Gate',
     body: 'The gate stands open to the avenue, and beyond it the black palace claws at the red sky: Kredik Shaw, the Hill of a Thousand Spires, vast beyond reason. A thousand years the Lord Ruler has watched the city from within it. They say he is immortal. They say he is God. Tonight, no one in Luthadel dares say otherwise.',
   },
   {
-    pos: new THREE.Vector3(-5.6, 1.6, 8),
-    title: 'A Noble Ball',
-    body: 'Keep Tellund blazes tonight. Through its towering windows the high nobility turn in their slow, glittering dances — silk and jewels, masks and wineglasses, a whole brilliant world sealed behind colored glass. Out in the street a skaa pauses in the falling ash to watch the silhouettes spin, then hurries on before a house guard marks the loitering.',
+    pos: new THREE.Vector3(-(AV / 2 + 3), 1.6, 22),
+    title: 'The Mists',
+    body: 'Nightfall, and the mists rise. They coil between the houses and drink the lamplight, and behind every barred door the skaa whisper the old fear — that things move out here when the world goes white. Yet a rare few walk willingly into the mist, and find that it does not harm them at all. It waits for them.',
+  },
+  {
+    pos: new THREE.Vector3(AV / 2 + 3, 1.6, ZB - 16),
+    title: 'Skaa Tenements',
+    body: 'The skaa quarters. Hundreds sleep stacked in these crumbling rows, roused before the red dawn to feed the forges and the canals. They keep their eyes low, their voices lower, and their hopes quieter still. In the Final Empire, to survive is to go unnoticed by it.',
+  },
+  {
+    pos: new THREE.Vector3(-XW + 7, 1.6, (ZB + ZF) / 2),
+    title: 'The City Wall',
+    body: 'The wall rings Luthadel like a clenched fist, studded with watch-towers where the Garrison stands its cold vigil. It was raised to keep enemies out — but a thousand years without a war have turned it inward, and now it mostly keeps the skaa in. From the parapet, they say, you can see the ashmounts burning on the horizon, and forget for a moment that you cannot leave.',
   },
 ];
 for (const p of POIS) {
@@ -784,9 +1107,15 @@ function spawnWalker(x: number, z: number, axis: 'x' | 'z', guard = false) {
   }
   walkers.push({ f, axis, dir, speed: guard ? rand(0.8, 1.0) : rand(0.7, 1.3), phase: rand(0, 6), ghosts });
 }
-for (const ax of [-4, 4, -27.5, 27.5] as const) spawnWalker(ax, rand(-50, 34), 'z'); // avenue + side streets
-for (const cz of [24.5, -7.5, -40] as const) spawnWalker(rand(-30, 30), cz, 'x');     // cross-streets
-spawnWalker(rand(-4, 4), rand(-40, 20), 'z', true);                                   // a Garrison patrol
+// skaa & guards on the avenue, the side-streets and the cross-streets
+const sideX = [-(AV / 2 - 2), AV / 2 - 2];
+for (let i = 0; i < COLS - 1; i++) { const gx = AV / 2 + BW + ST / 2 + i * (BW + ST); sideX.push(gx, -gx); }
+for (const ax of sideX) {
+  spawnWalker(ax, rand(ZF + 6, ZB - 6), 'z');
+  if (Math.random() < 0.5) spawnWalker(ax, rand(ZF + 6, ZB - 6), 'z');
+}
+for (let r = 0; r < ROWS - 1; r++) spawnWalker(rand(-XW + 8, XW - 8), (rowCenters[r][0] + rowCenters[r + 1][1]) / 2, 'x');
+for (let i = 0; i < 3; i++) spawnWalker(rand(-AV / 2, AV / 2), rand(ZF + 10, ZB - 10), 'z', true); // Garrison patrols
 
 // huddled beggars in the gutters & under the market awnings
 for (const [bx, bz] of [[-5, 16], [5.2, -2], [-5, -30], [14, 6], [-28, -8]] as const) {
@@ -824,6 +1153,8 @@ let tinAmt = 0;                            // eases toward tin ? 1 : 0
 let atium = false;                         // burning atium (G): shadows of the near future
 const FOG0 = (scene.fog as THREE.FogExp2).density;
 const EXPOSURE0 = renderer.toneMappingExposure;
+const CULL2 = 175 * 175;   // hide whole blocks beyond this (they're lost in the mist anyway)
+let lampTick = 0;          // throttles re-binding the lamp-light pool to the nearest lamps
 
 // =================== allomancy: burning steel/iron ===================
 // Hold to "burn metal": translucent blue lines lance from the chest to every
@@ -844,13 +1175,38 @@ sight.frustumCulled = false;
 sight.visible = false;
 scene.add(sight);
 
+// glowing nodes at each metal the lines touch, and a fat, pulsing beam to the anchor
+// you're actually pushing/pulling — the upgrade from the old 1px lines to a real
+// Allomantic "feel" (the bloom pass fattens all of this into proper light).
+const NODE_N = 36;
+const nodeTex = softSprite('rgba(150,200,255,0.95)');
+const nodes: THREE.Sprite[] = [];
+for (let i = 0; i < NODE_N; i++) {
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: nodeTex, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending,
+  }));
+  s.visible = false; scene.add(s); nodes.push(s);
+}
+const beamMat = new THREE.MeshBasicMaterial({ color: 0x7fc4ff, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending });
+const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 1, 8), beamMat);
+beam.userData.noShadow = true; beam.visible = false; scene.add(beam);
+const _bmid = new THREE.Vector3(), _bdir = new THREE.Vector3(), _bq = new THREE.Quaternion();
+const _yAxis = new THREE.Vector3(0, 1, 0);
+
 const _chest = new THREE.Vector3();
 function updateSight(t: number) {
   document.body.classList.toggle('burning', burning || pulling || pushing);
-  if (!burning && !pulling && !pushing && sightFlare <= 0) { sight.visible = false; return; }
+  if (!burning && !pulling && !pushing && sightFlare <= 0) {
+    if (sight.visible) sight.visible = false;
+    if (beam.visible) beam.visible = false;
+    for (const n of nodes) if (n.visible) n.visible = false;
+    return;
+  }
   sight.visible = true;
   _chest.copy(player.position).y -= 0.35; // lines spring from the sternum
   const pulse = 0.82 + 0.18 * Math.sin(t * 7);
+  let nodeI = 1;            // node 0 is reserved for the aimed anchor
+  let hasTarget = false;
   for (let i = 0; i < METALS.length; i++) {
     const m = METALS[i];
     const o = i * 6;
@@ -861,12 +1217,22 @@ function updateSight(t: number) {
       const b = isTarget ? pulse : Math.min(1, a * a * 1.7 * m.r) * pulse;
       sightPos[o] = _chest.x; sightPos[o + 1] = _chest.y; sightPos[o + 2] = _chest.z;
       sightPos[o + 3] = m.pos.x; sightPos[o + 4] = m.pos.y; sightPos[o + 5] = m.pos.z;
-      if (isTarget) { // the anchor you're pulling on flares bright blue-white
-        sightCol[o] = 0.5 * b; sightCol[o + 1] = 0.8 * b; sightCol[o + 2] = 1.0 * b;
-        sightCol[o + 3] = 0.85 * b; sightCol[o + 4] = 0.95 * b; sightCol[o + 5] = 1.0 * b;
+      if (isTarget) { // the anchor you're pulling on flares bright blue-white (>1 so bloom blazes)
+        sightCol[o] = 0.7 * b; sightCol[o + 1] = 1.0 * b; sightCol[o + 2] = 1.3 * b;
+        sightCol[o + 3] = 1.1 * b; sightCol[o + 4] = 1.25 * b; sightCol[o + 5] = 1.4 * b;
       } else {
-        sightCol[o] = 0.16 * b; sightCol[o + 1] = 0.40 * b; sightCol[o + 2] = 0.95 * b; // faint at the chest
-        sightCol[o + 3] = 0.42 * b; sightCol[o + 4] = 0.74 * b; sightCol[o + 5] = 1.0 * b; // bright at the metal
+        sightCol[o] = 0.20 * b; sightCol[o + 1] = 0.52 * b; sightCol[o + 2] = 1.2 * b;  // faint at the chest
+        sightCol[o + 3] = 0.55 * b; sightCol[o + 4] = 0.95 * b; sightCol[o + 5] = 1.35 * b; // blazing at the metal
+      }
+      // a glowing node where the line touches metal
+      if (isTarget) {
+        hasTarget = true;
+        const n = nodes[0]; n.visible = true; n.position.copy(m.pos); n.scale.set(1.7, 1.7, 1);
+        const nm = n.material as THREE.SpriteMaterial; nm.opacity = pulse; nm.color.setRGB(0.85, 0.95, 1.0);
+      } else if (nodeI < NODE_N) {
+        const n = nodes[nodeI++]; n.visible = true; n.position.copy(m.pos);
+        const sz = 0.45 + a * 0.7; n.scale.set(sz, sz, 1);
+        const nm = n.material as THREE.SpriteMaterial; nm.opacity = 0.4 * a * a * pulse; nm.color.setRGB(0.35, 0.6, 1.0);
       }
     } else {
       // collapse to a zero-length, unlit segment so it draws nothing
@@ -876,6 +1242,17 @@ function updateSight(t: number) {
       for (let k = 0; k < 6; k++) sightCol[o + k] = 0;
     }
   }
+  if (!hasTarget && nodes[0].visible) nodes[0].visible = false;
+  for (let k = nodeI; k < NODE_N; k++) if (nodes[k].visible) nodes[k].visible = false;
+  // the fat, pulsing beam to the anchor you're actually pushing/pulling on
+  if (pullTarget && (pulling || pushing)) {
+    beam.visible = true;
+    _bmid.copy(_chest).add(pullTarget).multiplyScalar(0.5); beam.position.copy(_bmid);
+    _bdir.copy(pullTarget).sub(_chest); const len = _bdir.length(); _bdir.divideScalar(len || 1);
+    beam.quaternion.setFromUnitVectors(_yAxis, _bdir);
+    beam.scale.set(1, len, 1);
+    beamMat.opacity = 0.45 + 0.3 * Math.sin(t * 22);
+  } else if (beam.visible) beam.visible = false;
   sightGeo.attributes.position.needsUpdate = true;
   sightGeo.attributes.color.needsUpdate = true;
 }
@@ -1134,8 +1511,48 @@ function animate() {
   grade.uniforms.tin.value = tinAmt;
   document.body.classList.toggle('pewter', !!(keys['ShiftLeft'] || keys['ShiftRight']) && controls.isLocked && grounded);
 
-  // ash fall + recycle around the camera
   const cp = player.position;
+
+  // the moon's shadow rig chases the player, so shadows stay crisp across the whole city
+  if (SHADOWS) {
+    moon.position.set(cp.x + MOON_OFF.x, MOON_OFF.y, cp.z + MOON_OFF.z);
+    moon.target.position.set(cp.x, 0, cp.z);
+    moon.target.updateMatrixWorld();
+  }
+
+  // bind the small pool of real lamp-lights to the nearest lamps (throttled), then flicker
+  lampTick -= dt;
+  if (lampTick <= 0) {
+    lampTick = 0.15;
+    lamps.sort((a, b) => ((a.x - cp.x) ** 2 + (a.z - cp.z) ** 2) - ((b.x - cp.x) ** 2 + (b.z - cp.z) ** 2));
+    for (let i = 0; i < LAMP_LIGHTS; i++) {
+      if (lamps[i]) {
+        lampPool[i].position.set(lamps[i].x, 4.5, lamps[i].z);
+        flamePool[i].visible = true; flamePool[i].position.set(lamps[i].x, 4.6, lamps[i].z);
+      } else { lampPool[i].intensity = 0; flamePool[i].visible = false; }
+    }
+    for (let i = 0; i < SHAFTS; i++) {                  // shafts hang only under the closest lamps (caps additive overdraw)
+      const lm = lamps[i];
+      if (lm && (lm.x - cp.x) ** 2 + (lm.z - cp.z) ** 2 < 22 * 22) { shaftPool[i].visible = true; shaftPool[i].position.set(lm.x, 2.25, lm.z); }
+      else shaftPool[i].visible = false;
+    }
+  }
+  for (let i = 0; i < LAMP_LIGHTS && lamps[i]; i++) {
+    // a guttering flame — irregular, dipping; never the steady output of a bulb
+    const fl = 0.78 + 0.16 * Math.sin(t * 12 + i * 1.7) + 0.10 * Math.sin(t * 24.5 + i * 4.1);
+    lampPool[i].intensity = 30 * fl;
+    const fs = flamePool[i];
+    fs.scale.set(0.5 + 0.12 * fl, 0.9 + 0.25 * fl, 1);
+    (fs.material as THREE.SpriteMaterial).opacity = 0.45 + 0.4 * fl;
+  }
+
+  // hide whole blocks lost in the mist — draw calls stay bounded no matter how big the city is
+  for (const b of blockGroups) {
+    const dx = b.cx - cp.x, dz = b.cz - cp.z;
+    b.g.visible = dx * dx + dz * dz < CULL2;
+  }
+
+  // ash fall + recycle around the camera
   for (let i = 0; i < ASH_N; i++) {
     let y = ashPos[i * 3 + 1] - ashFall[i] * dt;
     if (y < 0) y += 60;
@@ -1148,14 +1565,31 @@ function animate() {
   }
   ashGeo.attributes.position.needsUpdate = true;
 
-  // drifting, slowly coiling mist
+  // warm embers rising & swaying, recycled around the camera
+  for (let i = 0; i < EMB_N; i++) {
+    let y = embPos[i * 3 + 1] + embRise[i] * dt;
+    if (y > 18) y -= 18;
+    embPos[i * 3 + 1] = y;
+    embPos[i * 3] += Math.sin(t * 0.6 + embPh[i]) * 0.18 * dt;
+    embPos[i * 3 + 2] += Math.cos(t * 0.5 + embPh[i]) * 0.14 * dt;
+    const dx = embPos[i * 3] - cp.x;
+    if (dx > EFIELD) embPos[i * 3] -= 2 * EFIELD; else if (dx < -EFIELD) embPos[i * 3] += 2 * EFIELD;
+    const dz = embPos[i * 3 + 2] - cp.z;
+    if (dz > EFIELD) embPos[i * 3 + 2] -= 2 * EFIELD; else if (dz < -EFIELD) embPos[i * 3 + 2] += 2 * EFIELD;
+  }
+  embGeo.attributes.position.needsUpdate = true;
+
+  // drifting, slowly coiling mist — a local bank that wraps around the player
   for (const m of mists) {
     m.position.x += m.userData.dx * dt;
     m.position.z += m.userData.dz * dt;
     m.position.y += Math.sin(t * 0.3 + m.userData.bob) * 0.06 * dt;
     m.material.rotation += m.userData.rot * dt;
     m.material.opacity = m.userData.op0 * (1 - 0.55 * tinAmt);   // tin thins the mist
-    if (Math.abs(m.position.x - m.userData.x0) > 17) m.userData.dx *= -1;
+    const mdx = m.position.x - cp.x;
+    if (mdx > MFIELD) m.position.x -= 2 * MFIELD; else if (mdx < -MFIELD) m.position.x += 2 * MFIELD;
+    const mdz = m.position.z - cp.z;
+    if (mdz > MFIELD) m.position.z -= 2 * MFIELD; else if (mdz < -MFIELD) m.position.z += 2 * MFIELD;
   }
 
   // skaa & guards walking the streets, legs and arms swinging
@@ -1211,9 +1645,18 @@ function animate() {
   requestAnimationFrame(animate);
 }
 
-// every building, wall, roof and figure casts & receives the moon's shadow
+// every building, wall, roof and figure casts & receives the moon's shadow; and tune
+// how strongly each surface drinks the reflection environment — matte soot stays dull,
+// wet stone / water / copper domes / metal gleam with the red horizon & cold moon.
 scene.traverse((o) => {
-  if ((o as THREE.Mesh).isMesh && !o.userData.sky && !o.userData.noShadow) { o.castShadow = true; o.receiveShadow = true; }
+  const mesh = o as THREE.Mesh;
+  if (mesh.isMesh && !o.userData.sky && !o.userData.noShadow) { o.castShadow = true; o.receiveShadow = true; }
+  const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+  for (const mm of mats) {
+    const sm = mm as THREE.MeshStandardMaterial;
+    if (sm && (sm as unknown as { isMeshStandardMaterial?: boolean }).isMeshStandardMaterial)
+      sm.envMapIntensity = (sm.metalness > 0.1 || sm.roughness < 0.45) ? 0.9 : 0.32;
+  }
 });
 
 animate();
@@ -1222,7 +1665,7 @@ animate();
 if (import.meta.env.DEV) {
   (window as any).__lutha = {
     THREE, scene, camera, controls, player, renderer, composer, bloom, grade,
-    METALS, ROOFS,
+    METALS, ROOFS, lamps, lampPool, flamePool, blockGroups, shaftPool, embers, nodes, beam,
     burn: (v: boolean) => { burning = v; },
     pull: (v: boolean) => { pulling = v; },
     shove: (v: boolean) => { pushing = v; },

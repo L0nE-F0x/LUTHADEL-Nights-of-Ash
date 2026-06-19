@@ -44,9 +44,9 @@ The `dist/` folder is a plain static site — drop it on Netlify, Vercel, GitHub
 
 ## Roadmap ideas
 
-- ✅ Allomancy: steel-sight, steel-leap, **iron-pull** & **aimed steel-push**, **pewter**, **tin**, and **atium** (shadows of the near future) *(done)* — next: thrown coins, a fatter glowing line shader.
-- ✅ A graphics pass — bloom + PBR materials, **moonlight shadow maps**, peaked roofs & spired keeps, a looming Kredik Shaw under the red sun, coiling mist, and walking hooded-skaa + Garrison NPCs *(done)*.
-- ✅ A bigger city — a walled district of streets, a market square with a fountain, the city gate, and a **noble ball** glimpsed through a keep's windows *(done)* — next: Clubs' shop, canals & bridges, an even larger grid.
+- ✅ Allomancy: steel-sight, steel-leap, **iron-pull** & **aimed steel-push**, **pewter**, **tin**, **atium** (shadows of the near future), and a **glowing metal-sight** — bloom-bright lines, light-nodes, and a fat pulsing push/pull beam *(done)* — next: thrown coins.
+- ✅ A graphics pass — bloom, **image-based reflections**, a **chromatic-aberration + filmic colour grade**, PBR materials, **player-tracking moonlight shadow maps**, peaked & tile roofs, spired/domed/towered keeps, a crisp looming Kredik Shaw, coiling mist, **god-ray light-shafts**, **rising embers**, a hazy **moon**, and walking hooded-skaa + Garrison NPCs *(done)*.
+- ✅ A much bigger city — a **parametric district** (~180 buildings, scalable) with a grand avenue, a market & fountain, the Lord Ruler's plaza, **Clubs' shop**, the **Ministry cathedral**, an **ashen canal with arched bridges**, the **noble ball**, the walled gate with corner towers, and a fogged skyline beyond — kept smooth by block-culling, a chasing light-pool, follow-shadows & instancing *(done)* — next: interiors, curved streets, an even larger map.
 - A day/ash-storm cycle and heavier mist.
 - Other eras: the Elendel of the *Wax & Wayne* books as a second zone.
 - Mobile/touch controls.
