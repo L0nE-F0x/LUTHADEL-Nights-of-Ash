@@ -133,19 +133,117 @@ function cobbleSet() {
   return { map, normalMap, roughnessMap };
 }
 
-const KEEP_GLASS = ['#c0392b', '#caa13a', '#2e6da4', '#4a8f5a', '#7d3c98', '#bd5a26', '#3b8686'];
+// Each Great House lights its keep in a coherent two-tone palette, most of the glass
+// warm with candle/limelight behind it — never a random rainbow. (Per Coppermind, keep
+// windows are tall, deep-set & arched, with leaded stained-glass *scenes*; skaa live in
+// soot-blackened tenements with plain shuttered windows and no coloured glass at all.)
+type House = { a: string; b: string };
+const HOUSES: House[] = [
+  { a: '#9c3327', b: '#c79a3a' },  // crimson & gold
+  { a: '#2f5fa0', b: '#3f8a7e' },  // sapphire & teal
+  { a: '#3f7a46', b: '#c79a3a' },  // green & gold
+  { a: '#5d3a8e', b: '#9c3327' },  // violet & crimson
+  { a: '#2f5fa0', b: '#7d4f9e' },  // blue & violet
+  { a: '#b06a22', b: '#c79a3a' },  // amber & gold (a warm house)
+];
+const WARM_A = '#eab15c', WARM_B = '#c98a3a';   // candle/limelight behind clear or pale glass
+
+// a round-arched, deep-set window outline (rectangle wx..wx+w / wy..wy+h, plus a
+// semicircular arch of radius w/2 rising above the springline wy)
+function archWinPath(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number) {
+  const r = w / 2;
+  ctx.beginPath();
+  ctx.moveTo(x, y + h);
+  ctx.lineTo(x, y);
+  ctx.arc(x + r, y, r, Math.PI, 2 * Math.PI, false);
+  ctx.lineTo(x + w, y + h);
+  ctx.closePath();
+}
+
+// one grand keep window: a deep stone archway (or an occasional round oculus), filled with
+// leaded, variegated stained glass in the house palette, or warm candlelit glass, or dark.
+function drawKeepWindow(g: CanvasRenderingContext2D, ge: CanvasRenderingContext2D, gh: CanvasRenderingContext2D, x0: number, y0: number, cell: number, house: House) {
+  if (Math.random() < 0.15) return;                  // a blank bay — breaks the regular grid
+  const ww = cell * 0.46, wx = x0 + (cell - ww) / 2;
+  const wy = y0 + cell * 0.34, wh = cell * 0.56;      // springline & vertical height
+  const round = Math.random() < 0.10;                // an occasional rose-window oculus
+  const cx = wx + ww / 2, cyR = wy + wh * 0.45, rR = ww * 0.52;
+  const trace = (ctx: CanvasRenderingContext2D, d: number) => {
+    if (round) { ctx.beginPath(); ctx.arc(cx, cyR, rR + d, 0, Math.PI * 2); ctx.closePath(); }
+    else archWinPath(ctx, wx - d, wy - d, ww + 2 * d, wh + 2 * d);
+  };
+  trace(gh, 6); gh.fillStyle = '#5e5e5e'; gh.fill();   // raised buttressed surround
+  trace(gh, 1); gh.fillStyle = '#0d0d0d'; gh.fill();   // deep recess
+  trace(g, 3); g.fillStyle = '#0a0806'; g.fill();      // stone reveal
+
+  const roll = Math.random();
+  if (roll < 0.34) { trace(g, 0); g.fillStyle = '#070605'; g.fill(); return; }   // unlit
+  const stained = roll > 0.60;                          // ~40% of lit windows are stained glass
+
+  for (const ctx of [g, ge]) {
+    ctx.save(); trace(ctx, 0); ctx.clip();
+    const bx = wx - ww, by = wy - ww, bw = ww * 3, bh = wh + ww * 2;
+    if (stained) {
+      const grad = ctx.createLinearGradient(0, wy - ww * 0.5, 0, wy + wh);
+      grad.addColorStop(0, house.a); grad.addColorStop(0.5, house.b); grad.addColorStop(1, house.a);
+      ctx.fillStyle = grad; ctx.fillRect(bx, by, bw, bh);
+      ctx.globalAlpha = 0.5;                            // colour blotches → a glass "scene", not a flat pane
+      const pal = [house.a, house.b, WARM_A];
+      for (let i = 0; i < 4; i++) {
+        ctx.fillStyle = pal[i % 3];
+        ctx.beginPath(); ctx.arc(wx + rand(0.2, 0.8) * ww, wy + rand(-0.1, 0.9) * wh, rand(0.12, 0.3) * ww, 0, 6.283); ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+      const wc = ctx.createRadialGradient(cx, wy + wh * 0.6, 0, cx, wy + wh * 0.6, ww * 0.7);
+      wc.addColorStop(0, 'rgba(240,200,130,0.5)'); wc.addColorStop(1, 'rgba(240,200,130,0)');  // warm heart
+      ctx.fillStyle = wc; ctx.fillRect(bx, by, bw, bh);
+    } else {
+      const grad = ctx.createLinearGradient(0, wy - ww * 0.5, 0, wy + wh);
+      grad.addColorStop(0, WARM_B); grad.addColorStop(1, WARM_A);
+      ctx.fillStyle = grad; ctx.fillRect(bx, by, bw, bh);
+    }
+    ctx.strokeStyle = 'rgba(8,6,5,0.9)'; ctx.lineWidth = stained ? 2.5 : 2;   // leaded cames
+    ctx.beginPath();
+    ctx.moveTo(cx, wy - (round ? rR : ww / 2)); ctx.lineTo(cx, wy + wh);
+    for (let k = 1; k <= 2; k++) { const ty = wy + wh * k / 3; ctx.moveTo(wx, ty); ctx.lineTo(wx + ww, ty); }
+    if (!round) { ctx.moveTo(wx, wy); ctx.lineTo(cx, wy - ww * 0.5); ctx.moveTo(wx + ww, wy); ctx.lineTo(cx, wy - ww * 0.5); }
+    ctx.stroke();
+    ctx.beginPath(); ctx.arc(cx, wy + wh * 0.32, ww * 0.16, 0, 6.283); ctx.stroke();   // a leaded medallion
+    ctx.restore();
+  }
+}
+
+// one skaa window: a plain timber-shuttered opening, soot-dark, rarely a dim candle within
+function drawHovelWindow(g: CanvasRenderingContext2D, ge: CanvasRenderingContext2D, gh: CanvasRenderingContext2D, x0: number, y0: number, cell: number) {
+  if (Math.random() < 0.12) return;                  // blank wall
+  const ww = cell * 0.30, wh = cell * 0.34;
+  const wx = x0 + (cell - ww) / 2, wy = y0 + cell * 0.46;
+  gh.fillStyle = '#4a4a4a'; gh.fillRect(wx - 3, wy - 3, ww + 6, wh + 6);   // shallow timber frame
+  gh.fillStyle = '#0e0e0e'; gh.fillRect(wx - 1, wy - 1, ww + 2, wh + 2);
+  g.fillStyle = '#0a0806'; g.fillRect(wx - 2, wy - 2, ww + 4, wh + 4);
+  g.fillStyle = '#1c140d'; g.fillRect(wx, wy, ww, wh);                       // closed wooden shutters
+  g.strokeStyle = 'rgba(0,0,0,0.6)'; g.lineWidth = 1.2;
+  g.beginPath();
+  g.moveTo(wx + ww / 2, wy); g.lineTo(wx + ww / 2, wy + wh);                 // shutter split
+  for (let k = 1; k <= 2; k++) { const ty = wy + wh * k / 3; g.moveTo(wx, ty); g.lineTo(wx + ww, ty); }  // planks
+  g.stroke();
+  if (Math.random() < 0.14) {                                                // a dim candle through the gap
+    g.fillStyle = '#c8853a'; g.fillRect(wx + ww / 2 - 1.5, wy + 2, 3, wh - 4);
+    ge.fillStyle = '#5e3a14'; ge.fillRect(wx + ww / 2 - 1.5, wy + 2, 3, wh - 4);
+  }
+}
 
 function facadeSet(wWorld: number, hWorld: number, isKeep: boolean): THREE.Material[] {
-  const floors = Math.max(3, Math.round(hWorld / 3.2));
-  const cols = Math.max(2, Math.round(wWorld / 2.6));
-  const cell = 64;
+  const cell = isKeep ? 92 : 60;                                          // grander bays on the keeps
+  const floors = isKeep ? Math.max(3, Math.round(hWorld / 3.6)) : Math.max(3, Math.round(hWorld / 3.0));
+  const cols = isKeep ? Math.max(2, Math.round(wWorld / 3.6)) : Math.max(2, Math.round(wWorld / 2.4));
   const cw = cell * cols, ch = cell * floors;
   const map = document.createElement('canvas'); map.width = cw; map.height = ch;
   const emis = document.createElement('canvas'); emis.width = cw; emis.height = ch;
   const hgt = document.createElement('canvas'); hgt.width = cw; hgt.height = ch;
   const g = map.getContext('2d')!, ge = emis.getContext('2d')!, gh = hgt.getContext('2d')!;
 
-  g.fillStyle = isKeep ? '#241a12' : '#160f09'; g.fillRect(0, 0, cw, ch);
+  g.fillStyle = isKeep ? '#241a12' : '#140d08'; g.fillRect(0, 0, cw, ch);   // skaa stone is darker, sootier
   ge.fillStyle = '#000'; ge.fillRect(0, 0, cw, ch);
   gh.fillStyle = '#888'; gh.fillRect(0, 0, cw, ch);
 
@@ -163,40 +261,18 @@ function facadeSet(wWorld: number, hWorld: number, isKeep: boolean): THREE.Mater
     }
   }
 
-  // windows: recessed frames, with lit leaded/stained glass
-  const mx = cell * 0.26, top = cell * 0.30;
+  // windows — keeps get tall, deep-set, arched stained-glass in a coherent house palette
+  // (mostly warm candle/limelight); skaa get plain shuttered openings, no coloured glass
+  const house = isKeep ? HOUSES[(Math.random() * HOUSES.length) | 0] : null;
   for (let r = 0; r < floors; r++) {
     for (let c = 0; c < cols; c++) {
-      const x = c * cell + mx, y = r * cell + top;
-      const ww = cell - mx * 2, wh = cell - top - cell * 0.14;
-      gh.fillStyle = '#5a5a5a'; gh.fillRect(x - 5, y - 5, ww + 10, wh + 10); // raised stone surround
-      gh.fillStyle = '#0e0e0e'; gh.fillRect(x - 2, y - 2, ww + 4, wh + 4);   // deep recess
-      g.fillStyle = '#0a0806'; g.fillRect(x - 4, y - 4, ww + 8, wh + 8);
-      const lit = isKeep ? Math.random() < 0.58 : Math.random() < 0.16;
-      if (lit) {
-        const col = isKeep ? KEEP_GLASS[(Math.random() * KEEP_GLASS.length) | 0] : '#e0a64a';
-        g.fillStyle = col; g.fillRect(x, y, ww, wh);
-        ge.fillStyle = col; ge.fillRect(x, y, ww, wh);
-        g.strokeStyle = ge.strokeStyle = 'rgba(6,5,4,0.85)';
-        g.lineWidth = ge.lineWidth = isKeep ? 2 : 1.4;
-        const div = isKeep ? 3 : 2;
-        for (let k = 1; k < div; k++) {
-          const fx = x + ww * k / div;
-          g.beginPath(); g.moveTo(fx, y); g.lineTo(fx, y + wh); g.stroke();
-          ge.beginPath(); ge.moveTo(fx, y); ge.lineTo(fx, y + wh); ge.stroke();
-          const fy = y + wh * k / div;
-          g.beginPath(); g.moveTo(x, fy); g.lineTo(x + ww, fy); g.stroke();
-          ge.beginPath(); ge.moveTo(x, fy); ge.lineTo(x + ww, fy); ge.stroke();
-        }
-      } else {
-        g.fillStyle = '#080706'; g.fillRect(x, y, ww, wh);
-        gh.fillStyle = '#0c0c0c'; gh.fillRect(x, y, ww, wh);
-      }
+      if (isKeep) drawKeepWindow(g, ge, gh, c * cell, r * cell, cell, house!);
+      else drawHovelWindow(g, ge, gh, c * cell, r * cell, cell);
     }
   }
 
-  // soot streaks running down + top-darkening, "like paint down a canvas"
-  for (let i = 0; i < cw / 9; i++) {
+  // soot streaks running down + top-darkening, "like paint down a canvas" (heavier on skaa walls)
+  for (let i = 0; i < (isKeep ? cw / 10 : cw / 6); i++) {
     const sx = Math.random() * cw, sw = rand(3, 11), sh = rand(ch * 0.25, ch * 0.85);
     const grd = g.createLinearGradient(0, 0, 0, sh);
     grd.addColorStop(0, 'rgba(4,3,2,0.5)'); grd.addColorStop(1, 'rgba(4,3,2,0)');
@@ -212,7 +288,7 @@ function facadeSet(wWorld: number, hWorld: number, isKeep: boolean): THREE.Mater
   const normalTex = heightToNormal(hgt, 1.7);
   const facade = new THREE.MeshStandardMaterial({
     map: mapTex, emissiveMap: emisTex, emissive: 0xffffff,
-    emissiveIntensity: isKeep ? 1.7 : 1.0, normalMap: normalTex,
+    emissiveIntensity: isKeep ? 1.3 : 0.7, normalMap: normalTex,
     normalScale: new THREE.Vector2(0.85, 0.85), roughness: 0.95, metalness: 0,
   });
   const dark = new THREE.MeshStandardMaterial({ color: 0x0a0806, roughness: 1 });
@@ -493,7 +569,7 @@ const roofMat = new THREE.MeshStandardMaterial({ color: 0x130d07, roughness: 1, 
 const tileRoofMat = new THREE.MeshStandardMaterial({ color: 0x281009, roughness: 0.85, metalness: 0, side: THREE.DoubleSide }); // fired-clay tile, the wealthier rows
 const trimMat = new THREE.MeshStandardMaterial({ color: 0x0c0906, roughness: 1, metalness: 0 });
 const spireMat = new THREE.MeshStandardMaterial({ color: 0x09060b, roughness: 1, metalness: 0 });
-const domeMat = new THREE.MeshStandardMaterial({ color: 0x0b0b12, roughness: 0.7, metalness: 0.15 });
+const domeMat = new THREE.MeshStandardMaterial({ color: 0x3a2c1a, roughness: 0.5, metalness: 0.6 }); // tarnished copper/bronze roof sheeting
 // pre-bake a few façade material sets and reuse them across the district (cheap)
 const tenPool = Array.from({ length: 6 }, () => facadeSet(8, 10, false));
 const keepPool = Array.from({ length: 6 }, () => facadeSet(12, 22, true));
