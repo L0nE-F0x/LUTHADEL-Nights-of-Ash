@@ -880,7 +880,7 @@ const canalZ = (rowCenters[4][0] + rowCenters[3][1]) / 2;   // sits in the stree
   placeLamp(AV / 2 + 2, canalZ); placeLamp(-(AV / 2 + 2), canalZ);
 }
 
-// Keep Tellund — a noble ball you can step into: a glittering ballroom behind the glass
+// Keep Hasting — a noble ball you can step into: a glittering ballroom behind the glass
 const ballDancers: { m: THREE.Group; z0: number; ph: number }[] = [];
 {
   const bc = centerOf(BALL_B);
@@ -1167,7 +1167,7 @@ const POIS: POI[] = [
   {
     pos: new THREE.Vector3(ballC.x + 9, 1.6, ballC.z),
     title: 'A Noble Ball',
-    body: 'Keep Tellund blazes tonight. Through its towering windows the high nobility turn in their slow, glittering dances — silk and jewels, masks and wineglasses, a whole brilliant world sealed behind colored glass. Out in the street a skaa pauses in the falling ash to watch the silhouettes spin, then hurries on before a house guard marks the loitering.',
+    body: 'Keep Hasting blazes tonight. Through its towering windows the high nobility turn in their slow, glittering dances — silk and jewels, masks and wineglasses, a whole brilliant world sealed behind colored glass. Out in the street a skaa pauses in the falling ash to watch the silhouettes spin, then hurries on before a house guard marks the loitering.',
   },
   {
     pos: new THREE.Vector3(marketC.x, 1.6, marketC.z + 5),
