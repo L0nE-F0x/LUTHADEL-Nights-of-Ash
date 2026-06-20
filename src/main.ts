@@ -760,32 +760,99 @@ for (let c = 0; c < colCenters.length; c++) {
   for (const [ox, oz] of [[-6, -6], [6, 6], [-6, 6], [6, -6]] as const) placeLamp(p.x + ox, p.z + oz);
 }
 
-// Clubs' shop — a soot-stained workshop with a tall, smoking chimney (Kelsier's crew)
+// ---- enterable buildings -------------------------------------------------------------
+// A hollow shell so a landmark can be walked into: four façade walls with a doorway gap on
+// one face, plus a floor & ceiling. Only thin wall-COLLIDERS go into ROOFS (no solid
+// footprint), so the interior is walkable and the door gap lets you in; the spatial grid
+// picks the colliders up via buildGrids(). Interior lights are proximity-gated (perf).
+const interiorLights: { l: THREE.PointLight; x: number; z: number; max: number }[] = [];
+function addInteriorLight(x: number, y: number, z: number, color: number, range: number, max: number) {
+  const l = new THREE.PointLight(color, 0, range, 2); l.castShadow = false; l.position.set(x, y, z); scene.add(l);
+  interiorLights.push({ l, x, z, max });
+}
+function placeEnterable(parent: THREE.Object3D, cx: number, cz: number, w: number, d: number, h: number, mats: THREE.Material | THREE.Material[], door: 'x+' | 'x-' | 'z+' | 'z-') {
+  const T = 0.6, hw = w / 2, hd = d / 2, gap = 3.0, DOOR_H = 3.4;
+  // the shell is seen from BOTH sides, so clone the façade to double-sided — otherwise the
+  // inner faces are back-face-culled and you'd see straight through the walls from inside
+  const dbl = (m: THREE.Material) => { const c = m.clone(); c.side = THREE.DoubleSide; return c; };
+  const wallMats: THREE.Material | THREE.Material[] = Array.isArray(mats) ? mats.map(dbl) : dbl(mats);
+  const addWall = (wx: number, wz: number, ww: number, wd: number) => {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(ww, h, wd), wallMats);
+    m.position.set(wx, h / 2, wz); parent.add(m);
+    ROOFS.push({ minX: wx - ww / 2, maxX: wx + ww / 2, minZ: wz - wd / 2, maxZ: wz + wd / 2, top: h });
+  };
+  const lintel = (wx: number, wz: number, ww: number, wd: number) => {       // visual-only piece above the door (no collider)
+    if (h <= DOOR_H + 0.8) return;
+    const m = new THREE.Mesh(new THREE.BoxGeometry(ww, h - DOOR_H, wd), wallMats);
+    m.position.set(wx, (DOOR_H + h) / 2, wz); parent.add(m);
+  };
+  for (const face of ['z+', 'z-', 'x+', 'x-'] as const) {
+    const isDoor = face === door;
+    if (face === 'z+' || face === 'z-') {
+      const wz = cz + (face === 'z+' ? hd : -hd);
+      if (!isDoor) addWall(cx, wz, w, T);
+      else { const seg = (w - gap) / 2; addWall(cx - (gap + seg) / 2, wz, seg, T); addWall(cx + (gap + seg) / 2, wz, seg, T); lintel(cx, wz, gap, T); }
+    } else {
+      const wx = cx + (face === 'x+' ? hw : -hw);
+      if (!isDoor) addWall(wx, cz, T, d);
+      else { const seg = (d - gap) / 2; addWall(wx, cz - (gap + seg) / 2, T, seg); addWall(wx, cz + (gap + seg) / 2, T, seg); lintel(wx, cz, T, gap); }
+    }
+  }
+  const fl = new THREE.Mesh(new THREE.BoxGeometry(w - T, 0.12, d - T), new THREE.MeshStandardMaterial({ color: 0x16100a, roughness: 0.5, metalness: 0.1, side: THREE.DoubleSide }));
+  fl.position.set(cx, 0.06, cz); fl.userData.noShadow = true; parent.add(fl);
+  const ceil = new THREE.Mesh(new THREE.BoxGeometry(w - T, 0.3, d - T), new THREE.MeshStandardMaterial({ color: 0x0c0906, roughness: 1, side: THREE.DoubleSide }));
+  ceil.position.set(cx, h - 0.15, cz); parent.add(ceil);
+}
+
+// Clubs' shop — Kelsier's crew safehouse, a soot-stained workshop you can step into
 {
   const p = centerOf(CLUBS_B);
   const g = new THREE.Group();
-  placeBuilding(g, p.x, p.z, 11, 12, 9, false);
+  const w = 11, d = 12, h = 8;
+  placeEnterable(g, p.x, p.z, w, d, h, pickMat(tenPool), 'x+');           // door faces the avenue side
+  const cap = new THREE.Mesh(gableRoof(w + 0.5, d + 0.6, 2.2), roofMat); cap.position.set(p.x, h, p.z); g.add(cap);
   const chim = new THREE.Mesh(new THREE.BoxGeometry(1.2, 5, 1.2), trimMat);
-  chim.position.set(p.x + 3, 11, p.z + 3.5); g.add(chim);
+  chim.position.set(p.x + 3, h + 2.5, p.z + 3.5); g.add(chim);
+  // interior: a hearth, a long worktable, a few crates
+  const hearth = new THREE.Mesh(new THREE.BoxGeometry(2.4, 2.2, 0.7), trimMat); hearth.position.set(p.x - w / 2 + 0.7, 1.1, p.z); g.add(hearth);
+  const fire = new THREE.Mesh(new THREE.PlaneGeometry(1.5, 1.3), new THREE.MeshBasicMaterial({ color: 0xff7a26, side: THREE.DoubleSide }));
+  fire.position.set(p.x - w / 2 + 1.05, 1.0, p.z); fire.rotation.y = Math.PI / 2; fire.userData.noShadow = true; g.add(fire);
+  const table = new THREE.Mesh(new THREE.BoxGeometry(4, 0.3, 1.5), trimMat); table.position.set(p.x + 0.5, 0.9, p.z - 1.5); g.add(table);
+  for (const [ox, oz] of [[-1.6, -1], [1.8, 1.2], [-2, 2.3]] as const) {
+    const crate = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), trimMat); crate.position.set(p.x + ox, 0.5, p.z + oz); g.add(crate);
+  }
+  addInteriorLight(p.x - 1, 3, p.z, 0xffa040, 16, 20);
+  addMetal(p.x + 0.5, 1.0, p.z - 1.5, 0.9);                                // tools on the worktable
   scene.add(g); blockGroups.push({ g, cx: p.x, cz: p.z });
   const smoke = new THREE.Sprite(new THREE.SpriteMaterial({
     map: softSprite('rgba(120,108,92,0.5)'), transparent: true, opacity: 0.4, depthWrite: false,
   }));
-  smoke.scale.set(6, 8, 1); smoke.position.set(p.x + 3, 16, p.z + 3.5); smoke.userData.noShadow = true; scene.add(smoke);
+  smoke.scale.set(6, 8, 1); smoke.position.set(p.x + 3, h + 7, p.z + 3.5); smoke.userData.noShadow = true; scene.add(smoke);
   placeLamp(p.x - 5, p.z);
 }
 
-// the Ministry cathedral — a black mass of buttresses crowned by a great steeple, by the gate
+// the Ministry cathedral — a towering, oppressive nave you can enter, by the gate
 {
   const p = centerOf(MIN_B);
   const g = new THREE.Group();
-  placeBuilding(g, p.x, p.z, 16, 16, 30, true);
+  const w = 16, d = 16, h = 30;
+  placeEnterable(g, p.x, p.z, w, d, h, pickMat(keepPool), 'x-');           // door toward the avenue
   const steeple = new THREE.Mesh(new THREE.ConeGeometry(2.4, 30, 6), spireMat);
-  steeple.position.set(p.x, 45, p.z); g.add(steeple);
+  steeple.position.set(p.x, h + 15, p.z); g.add(steeple);
   for (const [ox, oz] of [[-7, -7], [7, -7], [-7, 7], [7, 7]] as const) {
     const buttress = new THREE.Mesh(new THREE.ConeGeometry(1.1, 14, 5), spireMat);
-    buttress.position.set(p.x + ox, 37, p.z + oz); g.add(buttress);
+    buttress.position.set(p.x + ox, h + 7, p.z + oz); g.add(buttress);
   }
+  // interior: two rows of soaring pillars + a raised altar lit a dim, blood red
+  for (let i = 0; i < 3; i++) for (const sx of [-1, 1] as const) {
+    const col = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.8, h - 1, 8), spireMat);
+    col.position.set(p.x + sx * 4.5, (h - 1) / 2, p.z - 4 + i * 4.5); g.add(col);
+  }
+  const altar = new THREE.Mesh(new THREE.BoxGeometry(4, 1.4, 2), trimMat); altar.position.set(p.x, 0.7, p.z + d / 2 - 2.5); g.add(altar);
+  const altarGlow = new THREE.Mesh(new THREE.PlaneGeometry(3, 2.2), new THREE.MeshBasicMaterial({ color: 0xc23018, side: THREE.DoubleSide }));
+  altarGlow.position.set(p.x, 2.4, p.z + d / 2 - 2.65); altarGlow.userData.noShadow = true; g.add(altarGlow);
+  addInteriorLight(p.x, 4, p.z + d / 2 - 3, 0x9a2c14, 22, 16);            // a cold, dim, sanguine sanctum
+  addMetal(p.x, 1.2, p.z + d / 2 - 2.5, 1.2);
   scene.add(g); blockGroups.push({ g, cx: p.x, cz: p.z });
   const rose = new THREE.Sprite(new THREE.SpriteMaterial({   // a rose-window blazing on the gate-facing wall
     map: softSprite('rgba(196,60,40,0.95)'), transparent: true, opacity: 0.9, depthWrite: false, blending: THREE.AdditiveBlending,
@@ -818,34 +885,41 @@ const canalZ = (rowCenters[4][0] + rowCenters[3][1]) / 2;   // sits in the stree
   placeLamp(AV / 2 + 2, canalZ); placeLamp(-(AV / 2 + 2), canalZ);
 }
 
-// a noble ball glimpsed through a keep's grand windows, off the avenue
+// Keep Tellund — a noble ball you can step into: a glittering ballroom behind the glass
 const ballDancers: { m: THREE.Group; z0: number; ph: number }[] = [];
 {
   const bc = centerOf(BALL_B);
-  const bx = bc.x, bz = bc.z, bw = 13;
+  const bx = bc.x, bz = bc.z, bw = 13, bd = 15, bh = 20;
   const bg = new THREE.Group();
-  placeBuilding(bg, bx, bz, bw, 15, 26, true);       // the grand keep
+  placeEnterable(bg, bx, bz, bw, bd, bh, pickMat(keepPool), 'x+');         // door on the avenue (+X) face
+  for (let i = 0; i < 4; i++) spireInst.push({ x: bx + rand(-bw / 2 + 1, bw / 2 - 1), y: bh, z: bz + rand(-bd / 2 + 1, bd / 2 - 1), r: rand(0.4, 0.7), h: rand(4, 8), rz: rand(-0.05, 0.05) });
+  spireInst.push({ x: bx, y: bh, z: bz, r: 0.8, h: 11, rz: 0 });           // a central spire, so it still reads as a keep
   scene.add(bg); blockGroups.push({ g: bg, cx: bx, cz: bz });
-  const faceX = bx + bw / 2 + 0.06;                  // its avenue-facing wall (+X)
-  const win = new THREE.Mesh(new THREE.PlaneGeometry(8, 9), new THREE.MeshBasicMaterial({ color: 0xd1a052 }));
-  win.position.set(faceX, 7.5, bz); win.rotation.y = Math.PI / 2; win.userData.noShadow = true; scene.add(win);
+  const faceX = bx + bw / 2 + 0.06;                  // the grand stained window, above the entrance (+X)
+  const win = new THREE.Mesh(new THREE.PlaneGeometry(8, 9), new THREE.MeshBasicMaterial({ color: 0xd1a052, side: THREE.DoubleSide }));
+  win.position.set(faceX, 11, bz); win.rotation.y = Math.PI / 2; win.userData.noShadow = true; scene.add(win);
   const lead = new THREE.MeshBasicMaterial({ color: 0x0a0806 });
   for (let k = -1; k <= 1; k++) {
     const v = new THREE.Mesh(new THREE.PlaneGeometry(0.14, 9), lead);
-    v.position.set(faceX + 0.02, 7.5, bz + k * 2.5); v.rotation.y = Math.PI / 2; v.userData.noShadow = true; scene.add(v);
-    const h = new THREE.Mesh(new THREE.PlaneGeometry(8, 0.14), lead);
-    h.position.set(faceX + 0.02, 7.5 + k * 2.8, bz); h.rotation.y = Math.PI / 2; h.userData.noShadow = true; scene.add(h);
+    v.position.set(faceX + 0.02, 11, bz + k * 2.5); v.rotation.y = Math.PI / 2; v.userData.noShadow = true; scene.add(v);
+    const hb = new THREE.Mesh(new THREE.PlaneGeometry(8, 0.14), lead);
+    hb.position.set(faceX + 0.02, 11 + k * 2.8, bz); hb.rotation.y = Math.PI / 2; hb.userData.noShadow = true; scene.add(hb);
+  }
+  for (const cz2 of [bz - 4, bz, bz + 4]) {           // chandeliers
+    const ch = new THREE.Mesh(new THREE.SphereGeometry(0.5, 8, 6), new THREE.MeshBasicMaterial({ color: 0xffd98a }));
+    ch.position.set(bx, bh - 3, cz2); ch.userData.noShadow = true; bg.add(ch);
   }
   const dmat = new THREE.MeshStandardMaterial({ color: 0x0b0907, roughness: 1 });
-  for (let i = 0; i < 6; i++) {
+  for (let i = 0; i < 6; i++) {                       // the high nobility, now turning on the ballroom floor
     const d = new THREE.Group();
     const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.17, 0.7, 3, 6), dmat); body.position.y = 0.55; body.userData.noShadow = true; d.add(body);
     const head = new THREE.Mesh(new THREE.SphereGeometry(0.13, 8, 8), dmat); head.position.y = 1.05; head.userData.noShadow = true; d.add(head);
     const z0 = bz - 3 + i * 1.2;
-    d.position.set(faceX + 0.4, 4.3, z0); scene.add(d);
+    d.position.set(bx + rand(-3, 3), 0, z0); bg.add(d);
     ballDancers.push({ m: d, z0, ph: rand(0, 6.28) });
   }
-  addMetal(faceX, 2, bz, 1.0);                        // a door fitting below the hall
+  addInteriorLight(bx, bh * 0.6, bz, 0xffd28a, 22, 26);
+  addMetal(faceX - 1, 2, bz, 1.0);
 }
 
 // the city wall rings the district; the gate on the avenue opens toward Kredik Shaw
@@ -1672,6 +1746,12 @@ function animate() {
     b.g.visible = dx * dx + dz * dz < CULL2;
   }
 
+  // interior lights only burn when the player is near their building (keeps active lights low)
+  for (const il of interiorLights) {
+    const dx = il.x - cp.x, dz = il.z - cp.z;
+    il.l.intensity = dx * dx + dz * dz < 50 * 50 ? il.max : 0;
+  }
+
   // ash fall + recycle around the camera
   for (let i = 0; i < ASH_N; i++) {
     let y = ashPos[i * 3 + 1] - ashFall[i] * dt;
@@ -1739,7 +1819,7 @@ function animate() {
   // the noble ball — dancers swaying behind the grand keep's bright windows
   for (const d of ballDancers) {
     d.m.position.z = d.z0 + Math.sin(t * 1.1 + d.ph) * 0.6;
-    d.m.position.y = 4.3 + Math.abs(Math.sin(t * 2.2 + d.ph)) * 0.09;
+    d.m.position.y = Math.abs(Math.sin(t * 2.2 + d.ph)) * 0.08;   // turning on the ballroom floor
     d.m.rotation.y = Math.sin(t * 0.7 + d.ph) * 0.6;
   }
 
@@ -1797,6 +1877,8 @@ if (import.meta.env.DEV) {
     surfaceAt: (x: number, z: number) => surfaceAt(x, z),
     metalsNear: (x: number, z: number, r: number) => metalsNear(x, z, r).slice(),
     gridStats: () => ({ metalCells: metalGrid.size, roofCells: roofGrid.size }),
+    resolveWalls: () => { resolveWalls(); return { x: +player.position.x.toFixed(2), z: +player.position.z.toFixed(2) }; },
+    interiorLights,
     set: (x: number, y: number, z: number) => { player.position.set(x, y, z); vy = 0; pullVel.set(0, 0, 0); },
     walkers, keys,
     diag: () => ({ isLocked: controls.isLocked, loreOpen, keysDown: Object.keys(keys).filter(k => keys[k]) }),
