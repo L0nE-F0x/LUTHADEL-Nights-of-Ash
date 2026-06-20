@@ -1,4 +1,5 @@
 import './style.css';
+import { mulberry32, pickSeed } from './rng';
 import * as THREE from 'three';
 import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
@@ -15,8 +16,15 @@ import { SMAAPass } from 'three/addons/postprocessing/SMAAPass.js';
    All in-world geometry, art and text here is original.
 =================================================================== */
 
-const rand = (a: number, b: number) => a + Math.random() * (b - a);
+// Seeded world RNG: one seed → one identical Luthadel (so the map is reproducible and,
+// later, sharable between server & clients). `rnd()` replaces every world-gen rnd();
+// the render loop itself uses no randomness, so the whole city is determined by SEED alone.
+const SEED = pickSeed();
+const rng = mulberry32(SEED);
+const rnd = () => rng();
+const rand = (a: number, b: number) => a + rnd() * (b - a);
 const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
+console.info('Luthadel city seed:', SEED, '— add ?seed=N to the URL to walk a different city');
 
 // ---- procedural textures (so the project ships with no image assets) ----
 
@@ -112,10 +120,10 @@ function cobbleSet() {
       gh.fillStyle = `rgb(${hv},${hv},${hv})`; ell(gh, cx, cy, rx, ry, rot);
     }
   }
-  for (let i = 0; i < 9000; i++) { g.fillStyle = `rgba(0,0,0,${rand(0.05, 0.2)})`; g.fillRect(Math.random() * S, Math.random() * S, rand(1, 2.2), rand(1, 2.2)); }
+  for (let i = 0; i < 9000; i++) { g.fillStyle = `rgba(0,0,0,${rand(0.05, 0.2)})`; g.fillRect(rnd() * S, rnd() * S, rand(1, 2.2), rand(1, 2.2)); }
   // broad damp patches — wet stone reflects the lamplight; wrapped so they tile too
   for (let i = 0; i < 11; i++) {
-    const px = Math.random() * S, py = Math.random() * S, pr = rand(45, 130);
+    const px = rnd() * S, py = rnd() * S, pr = rand(45, 130);
     for (let ox = -S; ox <= S; ox += S) for (let oy = -S; oy <= S; oy += S) {
       const pg = gr.createRadialGradient(px + ox, py + oy, 0, px + ox, py + oy, pr);
       pg.addColorStop(0, 'rgba(80,80,95,0.62)'); pg.addColorStop(1, 'rgba(80,80,95,0)');
@@ -163,10 +171,10 @@ function archWinPath(ctx: CanvasRenderingContext2D, x: number, y: number, w: num
 // one grand keep window: a deep stone archway (or an occasional round oculus), filled with
 // leaded, variegated stained glass in the house palette, or warm candlelit glass, or dark.
 function drawKeepWindow(g: CanvasRenderingContext2D, ge: CanvasRenderingContext2D, gh: CanvasRenderingContext2D, x0: number, y0: number, cell: number, house: House) {
-  if (Math.random() < 0.15) return;                  // a blank bay — breaks the regular grid
+  if (rnd() < 0.15) return;                  // a blank bay — breaks the regular grid
   const ww = cell * 0.46, wx = x0 + (cell - ww) / 2;
   const wy = y0 + cell * 0.34, wh = cell * 0.56;      // springline & vertical height
-  const round = Math.random() < 0.10;                // an occasional rose-window oculus
+  const round = rnd() < 0.10;                // an occasional rose-window oculus
   const cx = wx + ww / 2, cyR = wy + wh * 0.45, rR = ww * 0.52;
   const trace = (ctx: CanvasRenderingContext2D, d: number) => {
     if (round) { ctx.beginPath(); ctx.arc(cx, cyR, rR + d, 0, Math.PI * 2); ctx.closePath(); }
@@ -176,7 +184,7 @@ function drawKeepWindow(g: CanvasRenderingContext2D, ge: CanvasRenderingContext2
   trace(gh, 1); gh.fillStyle = '#0d0d0d'; gh.fill();   // deep recess
   trace(g, 3); g.fillStyle = '#0a0806'; g.fill();      // stone reveal
 
-  const roll = Math.random();
+  const roll = rnd();
   if (roll < 0.34) { trace(g, 0); g.fillStyle = '#070605'; g.fill(); return; }   // unlit
   const stained = roll > 0.60;                          // ~40% of lit windows are stained glass
 
@@ -215,7 +223,7 @@ function drawKeepWindow(g: CanvasRenderingContext2D, ge: CanvasRenderingContext2
 
 // one skaa window: a plain timber-shuttered opening, soot-dark, rarely a dim candle within
 function drawHovelWindow(g: CanvasRenderingContext2D, ge: CanvasRenderingContext2D, gh: CanvasRenderingContext2D, x0: number, y0: number, cell: number) {
-  if (Math.random() < 0.12) return;                  // blank wall
+  if (rnd() < 0.12) return;                  // blank wall
   const ww = cell * 0.30, wh = cell * 0.34;
   const wx = x0 + (cell - ww) / 2, wy = y0 + cell * 0.46;
   gh.fillStyle = '#4a4a4a'; gh.fillRect(wx - 3, wy - 3, ww + 6, wh + 6);   // shallow timber frame
@@ -227,7 +235,7 @@ function drawHovelWindow(g: CanvasRenderingContext2D, ge: CanvasRenderingContext
   g.moveTo(wx + ww / 2, wy); g.lineTo(wx + ww / 2, wy + wh);                 // shutter split
   for (let k = 1; k <= 2; k++) { const ty = wy + wh * k / 3; g.moveTo(wx, ty); g.lineTo(wx + ww, ty); }  // planks
   g.stroke();
-  if (Math.random() < 0.14) {                                                // a dim candle through the gap
+  if (rnd() < 0.14) {                                                // a dim candle through the gap
     g.fillStyle = '#c8853a'; g.fillRect(wx + ww / 2 - 1.5, wy + 2, 3, wh - 4);
     ge.fillStyle = '#5e3a14'; ge.fillRect(wx + ww / 2 - 1.5, wy + 2, 3, wh - 4);
   }
@@ -256,14 +264,14 @@ function facadeSet(wWorld: number, hWorld: number, isKeep: boolean): THREE.Mater
     for (let x = -course; x <= cw; x += course) {
       gh.fillStyle = '#1e1e1e'; gh.fillRect(x + bo - 1.5, y, 3, course);
       g.fillStyle = 'rgba(0,0,0,0.32)'; g.fillRect(x + bo - 1.5, y, 3, course);
-      g.fillStyle = Math.random() < 0.5 ? `rgba(0,0,0,${rand(0, 0.13)})` : `rgba(74,60,44,${rand(0, 0.07)})`;
+      g.fillStyle = rnd() < 0.5 ? `rgba(0,0,0,${rand(0, 0.13)})` : `rgba(74,60,44,${rand(0, 0.07)})`;
       g.fillRect(x + bo, y, course, course);
     }
   }
 
   // windows — keeps get tall, deep-set, arched stained-glass in a coherent house palette
   // (mostly warm candle/limelight); skaa get plain shuttered openings, no coloured glass
-  const house = isKeep ? HOUSES[(Math.random() * HOUSES.length) | 0] : null;
+  const house = isKeep ? HOUSES[(rnd() * HOUSES.length) | 0] : null;
   for (let r = 0; r < floors; r++) {
     for (let c = 0; c < cols; c++) {
       if (isKeep) drawKeepWindow(g, ge, gh, c * cell, r * cell, cell, house!);
@@ -273,7 +281,7 @@ function facadeSet(wWorld: number, hWorld: number, isKeep: boolean): THREE.Mater
 
   // soot streaks running down + top-darkening, "like paint down a canvas" (heavier on skaa walls)
   for (let i = 0; i < (isKeep ? cw / 10 : cw / 6); i++) {
-    const sx = Math.random() * cw, sw = rand(3, 11), sh = rand(ch * 0.25, ch * 0.85);
+    const sx = rnd() * cw, sw = rand(3, 11), sh = rand(ch * 0.25, ch * 0.85);
     const grd = g.createLinearGradient(0, 0, 0, sh);
     grd.addColorStop(0, 'rgba(4,3,2,0.5)'); grd.addColorStop(1, 'rgba(4,3,2,0)');
     g.fillStyle = grd; g.fillRect(sx, 0, sw, sh);
@@ -605,7 +613,7 @@ const domeMat = new THREE.MeshStandardMaterial({ color: 0x3a2c1a, roughness: 0.5
 // pre-bake a few façade material sets and reuse them across the district (cheap)
 const tenPool = Array.from({ length: 6 }, () => facadeSet(8, 10, false));
 const keepPool = Array.from({ length: 6 }, () => facadeSet(12, 22, true));
-const pickMat = (a: THREE.Material[][]) => a[(Math.random() * a.length) | 0];
+const pickMat = (a: THREE.Material[][]) => a[(rnd() * a.length) | 0];
 
 // Every keep's crowning spires are collected here and later drawn as ONE instanced mesh —
 // hundreds of spear-tips across the whole skyline for the cost of a single draw call.
@@ -623,9 +631,9 @@ function placeBuilding(parent: THREE.Object3D, cx: number, cz: number, w: number
   cor.position.set(cx, h - 0.3, cz); cor.rotation.y = yaw; parent.add(cor);
 
   if (isKeep) {
-    const crown = Math.random();
+    const crown = rnd();
     if (crown < 0.55) {                                   // a cluster of spires
-      const ns = 3 + (Math.random() * 4 | 0);
+      const ns = 3 + (rnd() * 4 | 0);
       for (let s = 0; s < ns; s++)
         spireInst.push({ x: cx + rand(-w / 2 + 0.8, w / 2 - 0.8), y: h, z: cz + rand(-d / 2 + 0.8, d / 2 - 0.8), r: rand(0.3, 0.6), h: rand(3, 7), rz: rand(-0.06, 0.06) });
       spireInst.push({ x: cx, y: h, z: cz, r: rand(0.5, 0.9), h: rand(7, 12), rz: 0 });
@@ -642,10 +650,10 @@ function placeBuilding(parent: THREE.Object3D, cx: number, cz: number, w: number
       spireInst.push({ x: cx, y: h + th, z: cz, r: 0.5, h: rand(4, 7), rz: 0 });
     }
   } else {
-    const tile = Math.random() < 0.25;
+    const tile = rnd() < 0.25;
     const roof = new THREE.Mesh(gableRoof(w + 0.5, d + 0.6, rand(1.6, 2.8)), tile ? tileRoofMat : roofMat);
     roof.position.set(cx, h, cz); roof.rotation.y = yaw; parent.add(roof);
-    if (Math.random() < 0.6) {                            // a soot-caked chimney
+    if (rnd() < 0.6) {                            // a soot-caked chimney
       const ch = new THREE.Mesh(new THREE.BoxGeometry(0.55, rand(1.2, 2.4), 0.55), trimMat);
       ch.position.set(cx + rand(-w / 3, w / 3), h + 1.1, cz + rand(-d / 3, d / 3)); parent.add(ch);
     }
@@ -655,7 +663,7 @@ function placeBuilding(parent: THREE.Object3D, cx: number, cz: number, w: number
   addMetal(cx - w / 2, 1.5, cz + rand(-d / 3, d / 3), 1.0);
   addMetal(cx + w / 2, 1.5, cz + rand(-d / 3, d / 3), 1.0);
   for (let b = 0; b < (isKeep ? 3 : 2); b++)
-    addMetal(cx + (Math.random() < 0.5 ? -1 : 1) * w / 2, rand(3, h - 2), cz + rand(-d / 2.5, d / 2.5), isKeep ? 1.1 : 0.8);
+    addMetal(cx + (rnd() < 0.5 ? -1 : 1) * w / 2, rand(3, h - 2), cz + rand(-d / 2.5, d / 2.5), isKeep ? 1.1 : 0.8);
   addMetal(cx + rand(-w / 3, w / 3), h + 0.3, cz + rand(-d / 3, d / 3), 1.3);
 }
 
@@ -665,8 +673,8 @@ function fillBlock(parent: THREE.Object3D, x0: number, x1: number, z0: number, z
   const nx = bw > 14 ? 2 : 1, nz = bd > 14 ? 2 : 1;
   const cwid = (bw - gap * (nx - 1)) / nx, cdep = (bd - gap * (nz - 1)) / nz;
   for (let i = 0; i < nx; i++) for (let j = 0; j < nz; j++) {
-    if (Math.random() < 0.07) continue;                  // an occasional empty/ruined lot
-    const isKeep = Math.random() < keepChance;
+    if (rnd() < 0.07) continue;                  // an occasional empty/ruined lot
+    const isKeep = rnd() < keepChance;
     const inset = rand(0.3, 1.0);
     const w = Math.max(4, cwid - inset * 2), d = Math.max(4, cdep - inset * 2);
     const h = isKeep ? rand(16, 26) * tall : rand(7, 12);
@@ -1035,10 +1043,10 @@ if (spireInst.length) {
 
   // the Hill of a Thousand Spires — black spears, denser & taller toward the centre
   for (let i = 0; i < 72; i++) {
-    const x = (Math.random() - 0.5) * 150;
+    const x = (rnd() - 0.5) * 150;
     const fall = 1 - Math.min(1, Math.abs(x) / 80) * 0.55;
     const hh = rand(46, 178) * fall;
-    const thin = Math.random() < 0.62;
+    const thin = rnd() < 0.62;
     const rr = thin ? rand(1.0, 2.6) : rand(3, 6);
     const sp = new THREE.Mesh(new THREE.ConeGeometry(rr, hh, thin ? 4 : 6), black);
     sp.position.set(x + rand(-5, 5), hh / 2 + rand(0, 26), rand(-188, -148));
@@ -1273,7 +1281,7 @@ type Walker = { f: Figure; axis: 'x' | 'z'; dir: number; speed: number; phase: n
 const walkers: Walker[] = [];
 function spawnWalker(x: number, z: number, axis: 'x' | 'z', guard = false) {
   const f = makeFigure(guard);
-  const dir = Math.random() < 0.5 ? 1 : -1;
+  const dir = rnd() < 0.5 ? 1 : -1;
   f.group.position.set(x, 0, z);
   f.group.rotation.y = axis === 'z' ? (dir > 0 ? Math.PI : 0) : (dir > 0 ? -Math.PI / 2 : Math.PI / 2);
   if (!guard) f.group.rotation.x = 0.06;               // skaa stoop forward
@@ -1294,7 +1302,7 @@ const sideX = [-(AV / 2 - 2), AV / 2 - 2];
 for (let i = 0; i < COLS - 1; i++) { const gx = AV / 2 + BW + ST / 2 + i * (BW + ST); sideX.push(gx, -gx); }
 for (const ax of sideX) {
   spawnWalker(ax, rand(ZF + 6, ZB - 6), 'z');
-  if (Math.random() < 0.5) spawnWalker(ax, rand(ZF + 6, ZB - 6), 'z');
+  if (rnd() < 0.5) spawnWalker(ax, rand(ZF + 6, ZB - 6), 'z');
 }
 for (let r = 0; r < ROWS - 1; r++) spawnWalker(rand(-XW + 8, XW - 8), (rowCenters[r][0] + rowCenters[r + 1][1]) / 2, 'x');
 for (let i = 0; i < 3; i++) spawnWalker(rand(-AV / 2, AV / 2), rand(ZF + 10, ZB - 10), 'z', true); // Garrison patrols
@@ -1615,7 +1623,7 @@ function startWind() {
     const data = buf.getChannelData(0);
     let last = 0;
     for (let i = 0; i < data.length; i++) {
-      const white = Math.random() * 2 - 1;
+      const white = rnd() * 2 - 1;
       last = (last + 0.02 * white) / 1.02;
       data[i] = last * 3.2;
     }
@@ -1866,7 +1874,7 @@ animate();
 if (import.meta.env.DEV) {
   (window as any).__lutha = {
     THREE, scene, camera, controls, player, renderer, composer, bloom, grade,
-    METALS, ROOFS, lamps, lampPool, flamePool, blockGroups, shaftPool, embers, nodes, beam,
+    METALS, ROOFS, lamps, lampPool, flamePool, blockGroups, shaftPool, embers, nodes, beam, SEED,
     burn: (v: boolean) => { burning = v; },
     pull: (v: boolean) => { pulling = v; },
     shove: (v: boolean) => { pushing = v; },
