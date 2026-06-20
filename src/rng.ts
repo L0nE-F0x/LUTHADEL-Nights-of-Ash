@@ -15,13 +15,3 @@ export function mulberry32(seed: number): () => number {
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
 }
-
-// The active world seed. `?seed=N` in the URL overrides the default, so a specific Luthadel
-// can be shared by link (and, later, dictated by the server at match start).
-export function pickSeed(fallback = 1337): number {
-  try {
-    const p = new URLSearchParams(location.search).get('seed');
-    if (p != null && Number.isFinite(Number(p))) return Number(p) >>> 0;
-  } catch { /* no location (e.g. SSR/tests) — fall through */ }
-  return fallback >>> 0;
-}

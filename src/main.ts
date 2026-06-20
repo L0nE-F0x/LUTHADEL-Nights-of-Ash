@@ -1,5 +1,5 @@
 import './style.css';
-import { mulberry32, pickSeed } from './rng';
+import { mulberry32 } from './rng';
 import { stepPlayer, steelLeap, surfaceAt, resolveWalls, metalsNear, newPlayerState, GRID, gkey } from './sim';
 import type { Metal, Roof, SimWorld, PlayerState, PlayerInput } from './sim';
 import * as THREE from 'three';
@@ -18,15 +18,16 @@ import { SMAAPass } from 'three/addons/postprocessing/SMAAPass.js';
    All in-world geometry, art and text here is original.
 =================================================================== */
 
-// Seeded world RNG: one seed → one identical Luthadel (so the map is reproducible and,
-// later, sharable between server & clients). `rnd()` replaces every world-gen rnd();
-// the render loop itself uses no randomness, so the whole city is determined by SEED alone.
-const SEED = pickSeed();
+// ONE fixed, canonical Luthadel — the same city every load, like a proper FPS map, so players
+// learn it and get better over time. `rnd()` is a seeded PRNG on a constant SEED used for ALL
+// world-gen, so the layout is deterministic (the render loop uses no randomness). That
+// determinism is also what lets every client build the identical map for multiplayer — the
+// server only has to sync players, never the world.
+const SEED = 1337;
 const rng = mulberry32(SEED);
 const rnd = () => rng();
 const rand = (a: number, b: number) => a + rnd() * (b - a);
 const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
-console.info('Luthadel city seed:', SEED, '— add ?seed=N to the URL to walk a different city');
 
 // ---- procedural textures (so the project ships with no image assets) ----
 
@@ -298,7 +299,7 @@ function facadeSet(wWorld: number, hWorld: number, isKeep: boolean): THREE.Mater
   const normalTex = heightToNormal(hgt, 1.7);
   const facade = new THREE.MeshStandardMaterial({
     map: mapTex, emissiveMap: emisTex, emissive: 0xffffff,
-    emissiveIntensity: isKeep ? 1.3 : 0.7, normalMap: normalTex,
+    emissiveIntensity: isKeep ? 0.85 : 0.5, normalMap: normalTex,   // calmer glass — was blinding up close
     normalScale: new THREE.Vector2(0.85, 0.85), roughness: 0.95, metalness: 0,
   });
   const dark = new THREE.MeshStandardMaterial({ color: 0x0a0806, roughness: 1 });
@@ -815,7 +816,7 @@ function placeEnterable(parent: THREE.Object3D, cx: number, cz: number, w: numbe
   for (const [ox, oz] of [[-1.6, -1], [1.8, 1.2], [-2, 2.3]] as const) {
     const crate = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), trimMat); crate.position.set(p.x + ox, 0.5, p.z + oz); g.add(crate);
   }
-  addInteriorLight(p.x - 1, 3, p.z, 0xffa040, 16, 20);
+  addInteriorLight(p.x - 1, 3, p.z, 0xffa040, 16, 8);
   addMetal(p.x + 0.5, 1.0, p.z - 1.5, 0.9);                                // tools on the worktable
   scene.add(g); blockGroups.push({ g, cx: p.x, cz: p.z });
   const smoke = new THREE.Sprite(new THREE.SpriteMaterial({
@@ -845,7 +846,7 @@ function placeEnterable(parent: THREE.Object3D, cx: number, cz: number, w: numbe
   const altar = new THREE.Mesh(new THREE.BoxGeometry(4, 1.4, 2), trimMat); altar.position.set(p.x, 0.7, p.z + d / 2 - 2.5); g.add(altar);
   const altarGlow = new THREE.Mesh(new THREE.PlaneGeometry(3, 2.2), new THREE.MeshBasicMaterial({ color: 0xc23018, side: THREE.DoubleSide }));
   altarGlow.position.set(p.x, 2.4, p.z + d / 2 - 2.65); altarGlow.userData.noShadow = true; g.add(altarGlow);
-  addInteriorLight(p.x, 4, p.z + d / 2 - 3, 0x9a2c14, 22, 16);            // a cold, dim, sanguine sanctum
+  addInteriorLight(p.x, 4, p.z + d / 2 - 3, 0x9a2c14, 22, 6);             // a cold, dim, sanguine sanctum
   addMetal(p.x, 1.2, p.z + d / 2 - 2.5, 1.2);
   scene.add(g); blockGroups.push({ g, cx: p.x, cz: p.z });
   const rose = new THREE.Sprite(new THREE.SpriteMaterial({   // a rose-window blazing on the gate-facing wall
@@ -890,7 +891,7 @@ const ballDancers: { m: THREE.Group; z0: number; ph: number }[] = [];
   spireInst.push({ x: bx, y: bh, z: bz, r: 0.8, h: 11, rz: 0 });           // a central spire, so it still reads as a keep
   scene.add(bg); blockGroups.push({ g: bg, cx: bx, cz: bz });
   const faceX = bx + bw / 2 + 0.06;                  // the grand stained window, above the entrance (+X)
-  const win = new THREE.Mesh(new THREE.PlaneGeometry(8, 9), new THREE.MeshBasicMaterial({ color: 0xd1a052, side: THREE.DoubleSide }));
+  const win = new THREE.Mesh(new THREE.PlaneGeometry(8, 9), new THREE.MeshBasicMaterial({ color: 0x8c6630, side: THREE.DoubleSide }));
   win.position.set(faceX, 11, bz); win.rotation.y = Math.PI / 2; win.userData.noShadow = true; scene.add(win);
   const lead = new THREE.MeshBasicMaterial({ color: 0x0a0806 });
   for (let k = -1; k <= 1; k++) {
@@ -912,7 +913,7 @@ const ballDancers: { m: THREE.Group; z0: number; ph: number }[] = [];
     d.position.set(bx + rand(-3, 3), 0, z0); bg.add(d);
     ballDancers.push({ m: d, z0, ph: rand(0, 6.28) });
   }
-  addInteriorLight(bx, bh * 0.6, bz, 0xffd28a, 22, 26);
+  addInteriorLight(bx, bh * 0.6, bz, 0xffd28a, 22, 9);
   addMetal(faceX - 1, 2, bz, 1.0);
 }
 
@@ -1218,16 +1219,13 @@ for (const p of POIS) {
   (p as POI & { glow: THREE.Sprite }).glow = glow;
 }
 
-// =================== NPCs: hooded skaa hurrying through the mist ===================
-// At dusk the skaa scurry home, heads down, before the mists fully rise. Shadowy,
-// stooped, cloaked against the ash — never meeting your eye.
+// =================== player-avatar figure (kept for Phase 1 multiplayer) ===================
+// The roaming skaa/Garrison NPCs + beggars were removed — a PvP arena holds only Mistborn,
+// and dropping them is a small perf win. makeFigure() stays: it becomes the networked avatar.
 const clothMat = new THREE.MeshStandardMaterial({ color: 0x15110e, roughness: 1, metalness: 0 });
 const guardMat = new THREE.MeshStandardMaterial({ color: 0x0d0f14, roughness: 1, metalness: 0 });
 const skinMat = new THREE.MeshStandardMaterial({ color: 0x2c211a, roughness: 1, metalness: 0 });
 const staffMat = new THREE.MeshStandardMaterial({ color: 0x191310, roughness: 1, metalness: 0 });
-// atium future-shadows: pale, translucent echoes of where a figure is about to be
-const GHOSTS = 4;
-const ghostGeo = new THREE.CapsuleGeometry(0.22, 1.0, 3, 6);
 
 // a low-poly cloaked figure with hip/shoulder pivots so the limbs can swing
 type Figure = { group: THREE.Group; legs: THREE.Group[]; arms: THREE.Group[] };
@@ -1263,45 +1261,9 @@ function makeFigure(guard: boolean): Figure {
   return { group: g, legs, arms };
 }
 
-type Walker = { f: Figure; axis: 'x' | 'z'; dir: number; speed: number; phase: number; ghosts: THREE.Mesh[] };
-const walkers: Walker[] = [];
-function spawnWalker(x: number, z: number, axis: 'x' | 'z', guard = false) {
-  const f = makeFigure(guard);
-  const dir = rnd() < 0.5 ? 1 : -1;
-  f.group.position.set(x, 0, z);
-  f.group.rotation.y = axis === 'z' ? (dir > 0 ? Math.PI : 0) : (dir > 0 ? -Math.PI / 2 : Math.PI / 2);
-  if (!guard) f.group.rotation.x = 0.06;               // skaa stoop forward
-  f.group.scale.setScalar(guard ? 1.12 : rand(0.9, 1.06));
-  scene.add(f.group);
-  const ghosts: THREE.Mesh[] = [];
-  for (let i = 0; i < GHOSTS; i++) {
-    const gh = new THREE.Mesh(ghostGeo, new THREE.MeshBasicMaterial({
-      color: 0xbfe6ff, transparent: true, opacity: 0.22 * (1 - i / GHOSTS),
-      depthWrite: false, blending: THREE.AdditiveBlending,
-    }));
-    gh.visible = false; gh.userData.noShadow = true; scene.add(gh); ghosts.push(gh);
-  }
-  walkers.push({ f, axis, dir, speed: guard ? rand(0.8, 1.0) : rand(0.7, 1.3), phase: rand(0, 6), ghosts });
-}
-// skaa & guards on the avenue, the side-streets and the cross-streets
-const sideX = [-(AV / 2 - 2), AV / 2 - 2];
-for (let i = 0; i < COLS - 1; i++) { const gx = AV / 2 + BW + ST / 2 + i * (BW + ST); sideX.push(gx, -gx); }
-for (const ax of sideX) {
-  spawnWalker(ax, rand(ZF + 6, ZB - 6), 'z');
-  if (rnd() < 0.5) spawnWalker(ax, rand(ZF + 6, ZB - 6), 'z');
-}
-for (let r = 0; r < ROWS - 1; r++) spawnWalker(rand(-XW + 8, XW - 8), (rowCenters[r][0] + rowCenters[r + 1][1]) / 2, 'x');
-for (let i = 0; i < 3; i++) spawnWalker(rand(-AV / 2, AV / 2), rand(ZF + 10, ZB - 10), 'z', true); // Garrison patrols
-
-// huddled beggars in the gutters & under the market awnings
-for (const [bx, bz] of [[-5, 16], [5.2, -2], [-5, -30], [14, 6], [-28, -8]] as const) {
-  const b = new THREE.Group();
-  const lump = new THREE.Mesh(new THREE.SphereGeometry(0.34, 8, 6), clothMat);
-  lump.position.y = 0.28; lump.scale.set(1.1, 0.66, 1); b.add(lump);
-  const hd = new THREE.Mesh(new THREE.SphereGeometry(0.13, 8, 7), clothMat);
-  hd.position.set(0, 0.5, 0.16); b.add(hd);
-  b.position.set(bx, 0, bz); b.rotation.y = rand(0, 6); scene.add(b);
-}
+// (Roaming NPC walkers, their spawn loops and the huddled beggars were removed — only
+// Mistborn fight in the mist. The atium ghost-trails went with them; atium will instead
+// reveal *enemy players'* near-future once multiplayer combat lands.)
 
 // =================== controls ===================
 const controls = new PointerLockControls(camera, document.body);
@@ -1664,30 +1626,6 @@ function animate() {
     if (mdz > MFIELD) m.position.z -= 2 * MFIELD; else if (mdz < -MFIELD) m.position.z += 2 * MFIELD;
   }
 
-  // skaa & guards walking the streets, legs and arms swinging
-  for (const wk of walkers) {
-    const g = wk.f.group, sp = wk.speed;
-    if (wk.axis === 'z') g.position.z += wk.dir * sp * dt; else g.position.x += wk.dir * sp * dt;
-    const ph = t * sp * 3.2 + wk.phase, sw = Math.sin(ph) * 0.5;
-    wk.f.legs[0].rotation.x = sw; wk.f.legs[1].rotation.x = -sw;
-    wk.f.arms[0].rotation.x = -sw * 0.7; wk.f.arms[1].rotation.x = sw * 0.7;
-    g.position.y = Math.abs(Math.sin(ph)) * 0.04;        // a little bob
-    if (wk.axis === 'z') {
-      if (g.position.z > ZB - 4) g.position.z = ZF + 4; else if (g.position.z < ZF + 4) g.position.z = ZB - 4;
-    } else {
-      if (g.position.x > XW - 4) g.position.x = -(XW - 4); else if (g.position.x < -(XW - 4)) g.position.x = XW - 4;
-    }
-    // atium: translucent echoes of where this figure is about to be
-    for (let i = 0; i < GHOSTS; i++) {
-      const gh = wk.ghosts[i];
-      if (!atium) { if (gh.visible) gh.visible = false; continue; }
-      const ahead = (i + 1) * 0.5;
-      gh.visible = true;
-      gh.position.set(g.position.x, 0.92, g.position.z);
-      if (wk.axis === 'z') gh.position.z += wk.dir * sp * ahead; else gh.position.x += wk.dir * sp * ahead;
-    }
-  }
-
   // the noble ball — dancers swaying behind the grand keep's bright windows
   for (const d of ballDancers) {
     d.m.position.z = d.z0 + Math.sin(t * 1.1 + d.ph) * 0.6;
@@ -1754,7 +1692,7 @@ if (import.meta.env.DEV) {
     resolveWalls: () => { resolveWalls(W, P); player.position.set(P.x, P.y, P.z); return { x: +P.x.toFixed(2), z: +P.z.toFixed(2) }; },
     interiorLights,
     set: (x: number, y: number, z: number) => { P.x = x; P.y = y; P.z = z; P.vx = P.vz = P.vy = P.px = P.pz = 0; player.position.set(x, y, z); },
-    walkers, keys,
+    keys,
     diag: () => ({ isLocked: controls.isLocked, loreOpen, keysDown: Object.keys(keys).filter(k => keys[k]) }),
     key: (code: string, down: boolean) => { keys[code] = down; },
   };
