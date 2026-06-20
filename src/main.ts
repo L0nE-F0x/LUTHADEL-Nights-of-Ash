@@ -1,5 +1,7 @@
 import './style.css';
 import { mulberry32, pickSeed } from './rng';
+import { stepPlayer, steelLeap, surfaceAt, resolveWalls, metalsNear, newPlayerState, GRID, gkey } from './sim';
+import type { Metal, Roof, SimWorld, PlayerState, PlayerInput } from './sim';
 import * as THREE from 'three';
 import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
@@ -484,34 +486,18 @@ scene.add(redGlow);
 // Every scrap of metal a Mistborn could push or pull on: lamp brackets, window
 // bars, door fittings, coins on the cobbles, vents on the rooftops. Burning
 // steel/iron draws a blue line to each of these; steel-pushing launches off them.
-type Metal = { pos: THREE.Vector3; r: number };
 const METALS: Metal[] = [];
 const addMetal = (x: number, y: number, z: number, r = 1) =>
   METALS.push({ pos: new THREE.Vector3(x, y, z), r });
 
 // building footprints, collected as we raise the street — used later for
 // landing on rooftops and for not walking through walls while leaping.
-type Roof = { minX: number; maxX: number; minZ: number; maxZ: number; top: number; _t?: number };
 const ROOFS: Roof[] = [];
 
-// ---- spatial hash grid -----------------------------------------------------------------
-// Keeps the per-frame collision (ROOFS) and metal-sight (METALS) scans O(nearby) instead
-// of O(all), so the city can grow huge without per-frame cost. Built once after world-gen.
-const GRID = 24;                                   // cell size (m); a few cells cover any query radius
-const gkey = (cx: number, cz: number) => cx * 100000 + cz;
+// ---- spatial hash grid (built by buildGrids; queried by the shared sim in src/sim.ts) ----
+// GRID/gkey/metalsNear/surfaceAt/resolveWalls now live in sim.ts; these are just the maps.
 const metalGrid = new Map<number, Metal[]>();
 const roofGrid = new Map<number, Roof[]>();
-const _near: Metal[] = [];
-function metalsNear(x: number, z: number, range: number): Metal[] {
-  _near.length = 0;
-  const c0x = Math.floor((x - range) / GRID), c1x = Math.floor((x + range) / GRID);
-  const c0z = Math.floor((z - range) / GRID), c1z = Math.floor((z + range) / GRID);
-  for (let cx = c0x; cx <= c1x; cx++) for (let cz = c0z; cz <= c1z; cz++) {
-    const a = metalGrid.get(gkey(cx, cz));
-    if (a) for (let i = 0; i < a.length; i++) _near.push(a[i]);
-  }
-  return _near;
-}
 function buildGrids() {
   for (const m of METALS) {
     const k = gkey(Math.floor(m.pos.x / GRID), Math.floor(m.pos.z / GRID));
@@ -1323,21 +1309,19 @@ const player = controls.object;
 player.position.set(0, 1.7, ZB - 16);   // spawn at the back wall, the full avenue receding toward Kredik Shaw
 
 const keys: Record<string, boolean> = {};
-const velocity = new THREE.Vector3();
-const direction = new THREE.Vector3();
 let loreOpen = false;
 
-// vertical physics for steel-jumping: gravity is light, so leaps hang in the mist
-const EYE = 1.7;          // eye height above whatever surface is underfoot
-const GRAVITY = 18;       // m/s² — floaty, mistcloak feel
-const LEAP_RANGE = 20;    // how far a steel-push can reach for an anchor
-let vy = 0;               // vertical velocity
-let grounded = true;
+// player physics is now a pure shared sim (src/sim.ts): P = the player's sim state,
+// W = the collision/anchor world it reads, inp = the per-frame input we feed it each tick.
+const P: PlayerState = newPlayerState(0, 1.7, ZB - 16);
+const W: SimWorld = { METALS, metalGrid, roofGrid, bounds: { XW, ZB, ZF } };
+const inp: PlayerInput = { fwd: 0, strafe: 0, yaw: 0, pitch: 0, pewter: false, pushing: false, pulling: false, jump: false, dt: 0 };
+const _euler = new THREE.Euler(0, 0, 0, 'YXZ');
+let jumpQueued = false;
 
 // further allomantic powers
 let pulling = false;                       // iron-pull (right-mouse): yank toward an anchor
 let pushing = false;                        // steel-push (left-mouse): shove off the gazed anchor
-const pullVel = new THREE.Vector3();       // world-space momentum from pushing/pulling
 let pullTarget: THREE.Vector3 | null = null;
 let tin = false;                           // burning tin (T): heightened senses, thinner mist
 let tinAmt = 0;                            // eases toward tin ? 1 : 0
@@ -1398,7 +1382,7 @@ function updateSight(t: number) {
   _chest.copy(player.position).y -= 0.35; // lines spring from the sternum
   const pulse = 0.82 + 0.18 * Math.sin(t * 7);
   // only the metals near the player can be in sight-range — query the grid, not all metals
-  const near = metalsNear(player.position.x, player.position.z, 38);
+  const near = metalsNear(W, player.position.x, player.position.z, 38);
   let j = 0, nodeI = 1, hasTarget = false;
   for (let i = 0; i < near.length && j < SIGHT_MAX; i++) {
     const m = near[i];
@@ -1444,103 +1428,8 @@ function updateSight(t: number) {
   sightGeo.attributes.color.needsUpdate = true;
 }
 
-// height of whatever you'd stand on at (x,z): a rooftop if you're over one, else the street (0)
-function surfaceAt(x: number, z: number): number {
-  let s = 0;
-  const a = roofGrid.get(gkey(Math.floor(x / GRID), Math.floor(z / GRID)));   // the cell holds every roof covering (x,z)
-  if (a) for (let i = 0; i < a.length; i++) { const r = a[i]; if (x >= r.minX && x <= r.maxX && z >= r.minZ && z <= r.maxZ && r.top > s) s = r.top; }
-  return s;
-}
-
-// shove the player out of any building footprint they're inside while below its roof
-let _wallTick = 0;
-function resolveWalls() {
-  const p = player.position;
-  const M = 0.4; // player half-width
-  _wallTick++;   // mark, so a roof spanning several cells is only handled once
-  const c0x = Math.floor((p.x - M) / GRID), c1x = Math.floor((p.x + M) / GRID);
-  const c0z = Math.floor((p.z - M) / GRID), c1z = Math.floor((p.z + M) / GRID);
-  for (let cx = c0x; cx <= c1x; cx++) for (let cz = c0z; cz <= c1z; cz++) {
-    const a = roofGrid.get(gkey(cx, cz));
-    if (!a) continue;
-    for (let i = 0; i < a.length; i++) {
-      const r = a[i];
-      if (r._t === _wallTick) continue; r._t = _wallTick;
-      if (p.y >= r.top + EYE - 0.05) continue;                 // feet at/above this roof — no wall
-      if (p.x <= r.minX - M || p.x >= r.maxX + M) continue;
-      if (p.z <= r.minZ - M || p.z >= r.maxZ + M) continue;
-      // inside the expanded footprint: eject along the axis of least penetration
-      const dl = p.x - (r.minX - M), dr = (r.maxX + M) - p.x;
-      const db = p.z - (r.minZ - M), df = (r.maxZ + M) - p.z;
-      const mx = Math.min(dl, dr), mz = Math.min(db, df);
-      if (mx < mz) p.x = dl < dr ? r.minX - M : r.maxX + M;
-      else p.z = db < df ? r.minZ - M : r.maxZ + M;
-    }
-  }
-}
-
-// steel-push: launch off the strongest metal anchor below you (or a dropped coin)
-const _coin = new THREE.Vector3();
-function steelPush() {
-  if (loreOpen || !controls.isLocked) return;
-  const p = player.position;
-  let best: THREE.Vector3 | null = null, bestScore = -1, bestUp = 0;
-  const near = metalsNear(p.x, p.z, LEAP_RANGE);
-  for (let i = 0; i < near.length; i++) {
-    const m = near[i], mp = m.pos;
-    const dx = p.x - mp.x, dy = p.y - mp.y, dz = p.z - mp.z;
-    const dist = Math.hypot(dx, dy, dz);
-    if (dist > LEAP_RANGE || dist < 0.6) continue;
-    const up = dy / dist;            // >0 means the metal is below you
-    if (up < 0.25) continue;         // can only launch upward off metal beneath you
-    const score = (up * m.r) / Math.max(2.5, dist);
-    if (score > bestScore) { bestScore = score; best = mp; bestUp = up; }
-  }
-  // nothing underfoot but you're near the ground? flip a coin down and push it (a coinshot)
-  if (!best && p.y < 3) { best = _coin.set(p.x, 0.02, p.z); bestUp = 1; }
-  if (!best) return;
-  const power = (keys['ShiftLeft'] || keys['ShiftRight']) ? 1.32 : 1; // pewter leaps higher
-  vy = Math.max(vy, (15 + bestUp * 10) * power);  // strong, mist-hanging launch
-  velocity.z -= 9 * power;                         // surge forward where you're looking
-  sightFlare = 0.7;                                // flash the steel-lines on launch
-  grounded = false;
-}
-
-// the metal nearest your gaze, within reach — the anchor a push/pull acts on
-const _fwd = new THREE.Vector3(), _to = new THREE.Vector3();
-function aimMetal(): THREE.Vector3 | null {
-  camera.getWorldDirection(_fwd);
-  const p = player.position;
-  let best: THREE.Vector3 | null = null, bestScore = -Infinity;
-  const near = metalsNear(p.x, p.z, 36);
-  for (let i = 0; i < near.length; i++) {
-    const m = near[i];
-    _to.copy(m.pos).sub(p);
-    const dist = _to.length();
-    if (dist < 1.4 || dist > 36) continue;
-    _to.divideScalar(dist);                  // normalize
-    const align = _to.dot(_fwd);             // 1 = straight where you're looking
-    if (align < 0.55) continue;
-    const score = align * 2.2 + m.r - dist * 0.03;
-    if (score > bestScore) { bestScore = score; best = m.pos; }
-  }
-  return best;
-}
-// iron-pull (toward) / steel-shove (away): yank or kick yourself off the gazed anchor
-function alloMove(dt: number, away: boolean) {
-  if (loreOpen || !controls.isLocked) { pullTarget = null; return; }
-  const best = aimMetal(); pullTarget = best;
-  if (!best) return;
-  const p = player.position;
-  if (away) _to.copy(p).sub(best); else _to.copy(best).sub(p);
-  const dist = _to.length(); if (dist < 0.001) return; _to.divideScalar(dist);
-  const accel = 30 * dt;
-  pullVel.x += _to.x * accel;
-  pullVel.z += _to.z * accel;
-  vy += _to.y * accel;                       // through gravity's vy
-  grounded = false;
-  sightFlare = Math.max(sightFlare, 0.15);   // light the lines while burning iron/steel
-}
+// surfaceAt / resolveWalls / aimMetal / steelLeap / stepPlayer now live in src/sim.ts —
+// the pure, engine-free simulation that the client and the future server both run.
 
 addEventListener('keydown', (e) => {
   keys[e.code] = true;
@@ -1556,7 +1445,7 @@ addEventListener('keydown', (e) => {
     localStorage.setItem('lutha_noshadow', localStorage.getItem('lutha_noshadow') === '1' ? '0' : '1');
     location.reload();
   }
-  if (e.code === 'Space') { e.preventDefault(); if (!e.repeat) steelPush(); }
+  if (e.code === 'Space') { e.preventDefault(); if (!e.repeat && controls.isLocked && !loreOpen) jumpQueued = true; }
 });
 addEventListener('keyup', (e) => {
   keys[e.code] = false;
@@ -1660,45 +1549,20 @@ function animate() {
   const dt = Math.min(clock.getDelta(), 0.05);
   const t = clock.elapsedTime;
 
-  // movement
+  // movement — the entire physics step is now one pure function (shared with the server).
+  // The camera owns look (mouse); we read yaw/pitch off it, run the sim, write position back.
   if (controls.isLocked && !loreOpen) {
-    const pewter = keys['ShiftLeft'] || keys['ShiftRight'];
-    const speed = pewter ? 16 : 8;            // pewter lets you sprint
-    const damp = grounded ? 9 : 1.3;          // glide through the air on a leap
-    velocity.x -= velocity.x * damp * dt;
-    velocity.z -= velocity.z * damp * dt;
-    // ternaries, not Number(): an unpressed key is `undefined`, and Number(undefined)
-    // is NaN, which poisons `direction` and silently kills movement.
-    direction.z = (keys['KeyW'] || keys['ArrowUp'] ? 1 : 0) - (keys['KeyS'] || keys['ArrowDown'] ? 1 : 0);
-    direction.x = (keys['KeyD'] || keys['ArrowRight'] ? 1 : 0) - (keys['KeyA'] || keys['ArrowLeft'] ? 1 : 0);
-    direction.normalize();
-    const accel = (grounded ? 1 : 0.45) * speed * dt * 8;   // a little air control
-    if (direction.z) velocity.z -= direction.z * accel;
-    if (direction.x) velocity.x -= direction.x * accel;
-    controls.moveRight(-velocity.x * dt);
-    controls.moveForward(-velocity.z * dt);
-
-    // steel-push / iron-pull: shove off or yank toward the gazed anchor, then coast
-    pullTarget = null;
-    if (pulling) alloMove(dt, false); else if (pushing) alloMove(dt, true);
-    player.position.x += pullVel.x * dt;
-    player.position.z += pullVel.z * dt;
-    pullVel.multiplyScalar(Math.max(0, 1 - ((pulling || pushing) ? 2.6 : 4.5) * dt));
-
-    // gravity + vertical integration
-    vy -= GRAVITY * dt;
-    player.position.y += vy * dt;
-
-    // land on whatever's underfoot — a rooftop, or the street
-    const floor = surfaceAt(player.position.x, player.position.z) + EYE;
-    if (player.position.y <= floor) { player.position.y = floor; vy = 0; grounded = true; }
-    else grounded = false;
-
-    resolveWalls();   // don't pass through building walls mid-leap
-
-    // contain to the walled district; buildings & walls block via resolveWalls()
-    player.position.x = clamp(player.position.x, -(XW + 1), XW + 1);
-    player.position.z = clamp(player.position.z, ZF - 1, ZB + 1);
+    _euler.setFromQuaternion(camera.quaternion, 'YXZ');
+    inp.fwd = (keys['KeyW'] || keys['ArrowUp'] ? 1 : 0) - (keys['KeyS'] || keys['ArrowDown'] ? 1 : 0);
+    inp.strafe = (keys['KeyD'] || keys['ArrowRight'] ? 1 : 0) - (keys['KeyA'] || keys['ArrowLeft'] ? 1 : 0);
+    inp.yaw = _euler.y; inp.pitch = _euler.x;
+    inp.pewter = !!(keys['ShiftLeft'] || keys['ShiftRight']);
+    inp.pushing = pushing; inp.pulling = pulling; inp.jump = jumpQueued; inp.dt = dt;
+    jumpQueued = false;
+    stepPlayer(W, P, inp);
+    pullTarget = P.target;
+    if (P.leaped) sightFlare = 0.7;                 // flash the steel-lines on a leap
+    player.position.set(P.x, P.y, P.z);
   }
 
   // tin: ease the senses open — thinner fog & mist, a brighter, colder clarity
@@ -1707,7 +1571,7 @@ function animate() {
   renderer.toneMappingExposure = EXPOSURE0 * (1 + 0.32 * tinAmt);
   grade.uniforms.bright.value = 1 + 0.16 * tinAmt;
   grade.uniforms.tin.value = tinAmt;
-  document.body.classList.toggle('pewter', !!(keys['ShiftLeft'] || keys['ShiftRight']) && controls.isLocked && grounded);
+  document.body.classList.toggle('pewter', !!(keys['ShiftLeft'] || keys['ShiftRight']) && controls.isLocked && P.grounded);
 
   const cp = player.position;
 
@@ -1880,14 +1744,16 @@ if (import.meta.env.DEV) {
     shove: (v: boolean) => { pushing = v; },
     tinOn: (v: boolean) => { tin = v; },
     atiumOn: (v: boolean) => { atium = v; },
-    push: () => steelPush(),
-    state: () => ({ y: +player.position.y.toFixed(2), vy: +vy.toFixed(2), grounded, tinAmt: +tinAmt.toFixed(2), pulling, target: pullTarget ? pullTarget.toArray().map(n => +n.toFixed(1)) : null }),
-    surfaceAt: (x: number, z: number) => surfaceAt(x, z),
-    metalsNear: (x: number, z: number, r: number) => metalsNear(x, z, r).slice(),
+    P, W,
+    push: () => { const ok = steelLeap(W, P, false); player.position.set(P.x, P.y, P.z); return ok; },
+    step: (i: Partial<PlayerInput>) => { Object.assign(inp, { fwd: 0, strafe: 0, yaw: 0, pitch: 0, pewter: false, pushing: false, pulling: false, jump: false, dt: 1 / 60 }, i); stepPlayer(W, P, inp); player.position.set(P.x, P.y, P.z); return { x: +P.x.toFixed(2), y: +P.y.toFixed(2), z: +P.z.toFixed(2), vy: +P.vy.toFixed(2), grounded: P.grounded }; },
+    state: () => ({ y: +P.y.toFixed(2), vy: +P.vy.toFixed(2), grounded: P.grounded, tinAmt: +tinAmt.toFixed(2), pulling, target: pullTarget ? pullTarget.toArray().map(n => +n.toFixed(1)) : null }),
+    surfaceAt: (x: number, z: number) => surfaceAt(W, x, z),
+    metalsNear: (x: number, z: number, r: number) => metalsNear(W, x, z, r).slice(),
     gridStats: () => ({ metalCells: metalGrid.size, roofCells: roofGrid.size }),
-    resolveWalls: () => { resolveWalls(); return { x: +player.position.x.toFixed(2), z: +player.position.z.toFixed(2) }; },
+    resolveWalls: () => { resolveWalls(W, P); player.position.set(P.x, P.y, P.z); return { x: +P.x.toFixed(2), z: +P.z.toFixed(2) }; },
     interiorLights,
-    set: (x: number, y: number, z: number) => { player.position.set(x, y, z); vy = 0; pullVel.set(0, 0, 0); },
+    set: (x: number, y: number, z: number) => { P.x = x; P.y = y; P.z = z; P.vx = P.vz = P.vy = P.px = P.pz = 0; player.position.set(x, y, z); },
     walkers, keys,
     diag: () => ({ isLocked: controls.isLocked, loreOpen, keysDown: Object.keys(keys).filter(k => keys[k]) }),
     key: (code: string, down: boolean) => { keys[code] = down; },
