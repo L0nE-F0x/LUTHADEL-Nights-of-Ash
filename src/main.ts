@@ -532,10 +532,8 @@ const lamps: Lamp[] = [];
 function placeLamp(lx: number, lz: number) {
   const halo = new THREE.Sprite(lampHaloMat);
   halo.scale.set(2.1, 2.1, 1); halo.position.set(lx, 4.5, lz); scene.add(halo);
-  const post = new THREE.Mesh(lampPostGeo, lampPostMat);
-  post.position.set(lx, 2.3, lz); scene.add(post);
   addMetal(lx, 4.3, lz, 1.6); // the lantern's heavy iron bracket — a push/pull anchor
-  lamps.push({ x: lx, z: lz, halo });
+  lamps.push({ x: lx, z: lz, halo });   // posts are drawn as one InstancedMesh once all lamps exist
 }
 // a fixed pool of real flame-lights that chase the player, and a matching pool of
 // guttering flame sprites for the nearest lamps (the unmistakable "it's fire" tell)
@@ -964,6 +962,14 @@ const ballDancers: { m: THREE.Group; z0: number; ph: number }[] = [];
     const z = (rowCenters[r][0] + rowCenters[r][1]) / 2;
     placeLamp(AV / 2 - 1.5, z); placeLamp(-(AV / 2 - 1.5), z);
   }
+}
+// every lamp post as ONE instanced mesh — ~70 posts for a single draw call
+{
+  const inst = new THREE.InstancedMesh(lampPostGeo, lampPostMat, lamps.length);
+  const m = new THREE.Matrix4();
+  for (let i = 0; i < lamps.length; i++) inst.setMatrixAt(i, m.makeTranslation(lamps[i].x, 2.3, lamps[i].z));
+  inst.instanceMatrix.needsUpdate = true;
+  scene.add(inst);
 }
 
 // =================== coins on the cobbles ===================
