@@ -36,6 +36,24 @@ npm run preview    # preview the production build
 
 The `dist/` folder is a plain static site — drop it on Netlify, Vercel, GitHub Pages, etc.
 
+## Multiplayer (experimental — an Allomancy PvP arena)
+
+The goal is a first-person arena where two-plus Mistborn duel with Allomancy in a **fixed,
+shared Luthadel** (one canonical map, same every load, so players learn it).
+
+- **Architecture:** see [`PVP_ARCHITECTURE.md`](PVP_ARCHITECTURE.md). The physics is a pure,
+  engine-free sim ([`src/sim.ts`](src/sim.ts)) that the client and server both run; combat
+  (coinshots, push/pull, health) lives in [`src/combat.ts`](src/combat.ts).
+- **Try it locally** (relay first cut — see each other move):
+  ```bash
+  npm run server     # relay on ws://localhost:8090
+  npm run dev        # client on :5180  (separate terminal)
+  ```
+  Open two browser tabs on :5180.
+- **Host the relay (free):** Render (`render.yaml`) or Fly.io (`fly.toml` + `Dockerfile`), then
+  point the client at it via `VITE_SERVER_URL` (see [`.env.example`](.env.example)). The
+  deployed site stays **single-player** until that's set, so it never breaks.
+
 ## How it's made
 
 - **No image/audio assets ship with the project.** Every texture is drawn procedurally on a `<canvas>` at load — including baked **normal and roughness maps**, so the cobbles catch the lamplight in real relief and wet stone glistens — and the ambient wind is synthesized with the Web Audio API.
@@ -47,6 +65,7 @@ The `dist/` folder is a plain static site — drop it on Netlify, Vercel, GitHub
 - ✅ Allomancy: steel-sight, steel-leap, **iron-pull** & **aimed steel-push**, **pewter**, **tin**, **atium** (shadows of the near future), and a **glowing metal-sight** — bloom-bright lines, light-nodes, and a fat pulsing push/pull beam *(done)* — next: thrown coins.
 - ✅ A graphics pass — bloom, **image-based reflections**, a **chromatic-aberration + filmic colour grade**, PBR materials, **player-tracking moonlight shadow maps**, peaked & tile roofs, spired/domed/towered keeps, a crisp looming Kredik Shaw, coiling mist, **god-ray light-shafts**, **rising embers**, a hazy **moon**, and walking hooded-skaa + Garrison NPCs *(done)*.
 - ✅ A much bigger city — a **parametric district** (~180 buildings, scalable) with a grand avenue, a market & fountain, the Lord Ruler's plaza, **Clubs' shop**, the **Ministry cathedral**, an **ashen canal with arched bridges**, the **noble ball**, the walled gate with corner towers, and a fogged skyline beyond — kept smooth by block-culling, a chasing light-pool, follow-shadows & instancing *(done)* — next: interiors, curved streets, an even larger map.
+- 🔜 Multiplayer Allomancy **PvP**: fixed shared map ✅, pure shared sim ✅, relay so players see each other move ✅, combat core (coinshots / knockback / health) ✅ — next: an authoritative server with prediction + reconciliation, then live combat (needs a hosted server).
 - A day/ash-storm cycle and heavier mist.
 - Other eras: the Elendel of the *Wax & Wayne* books as a second zone.
 - Mobile/touch controls.
