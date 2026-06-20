@@ -3,6 +3,7 @@ import { mulberry32 } from './rng';
 import { stepPlayer, steelLeap, surfaceAt, resolveWalls, metalsNear, newPlayerState, GRID, gkey } from './sim';
 import type { Metal, Roof, SimWorld, PlayerState, PlayerInput } from './sim';
 import { netStart, netSend, netPeers, netConnected, netInterpolated } from './net';
+import * as combat from './combat';
 import * as THREE from 'three';
 import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
@@ -1715,7 +1716,7 @@ if (import.meta.env.DEV) {
     resolveWalls: () => { resolveWalls(W, P); player.position.set(P.x, P.y, P.z); return { x: +P.x.toFixed(2), z: +P.z.toFixed(2) }; },
     interiorLights,
     set: (x: number, y: number, z: number) => { P.x = x; P.y = y; P.z = z; P.vx = P.vz = P.vy = P.px = P.pz = 0; player.position.set(x, y, z); },
-    keys, peerAvatars,
+    keys, peerAvatars, combat,
     net: () => ({ connected: netConnected(), peers: [...netPeers().entries()], avatars: peerAvatars.size }),
     diag: () => ({ isLocked: controls.isLocked, loreOpen, keysDown: Object.keys(keys).filter(k => keys[k]) }),
     key: (code: string, down: boolean) => { keys[code] = down; },
