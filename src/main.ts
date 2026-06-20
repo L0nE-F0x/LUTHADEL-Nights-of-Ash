@@ -2,6 +2,7 @@ import './style.css';
 import { mulberry32 } from './rng';
 import { stepPlayer, steelLeap, surfaceAt, resolveWalls, metalsNear, newPlayerState, GRID, gkey } from './sim';
 import type { Metal, Roof, SimWorld, PlayerState, PlayerInput } from './sim';
+import { netStart, netSend, netPeers, netConnected } from './net';
 import * as THREE from 'three';
 import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
@@ -1281,6 +1282,11 @@ const inp: PlayerInput = { fwd: 0, strafe: 0, yaw: 0, pitch: 0, pewter: false, p
 const _euler = new THREE.Euler(0, 0, 0, 'YXZ');
 let jumpQueued = false;
 
+// multiplayer (Phase 1 relay): the other Mistborn, drawn as cloaked avatars
+const peerAvatars = new Map<number, Figure>();
+const _peerTmp = new THREE.Vector3();
+netStart();
+
 // further allomantic powers
 let pulling = false;                       // iron-pull (right-mouse): yank toward an anchor
 let pushing = false;                        // steel-push (left-mouse): shove off the gazed anchor
@@ -1525,6 +1531,25 @@ function animate() {
     pullTarget = P.target;
     if (P.leaped) sightFlare = 0.7;                 // flash the steel-lines on a leap
     player.position.set(P.x, P.y, P.z);
+    netSend(P.x, P.y, P.z, _euler.y, dt);           // broadcast our position to the other Mistborn
+  }
+
+  // draw the other players as cloaked avatars (Phase 1 relay: smoothed toward their latest state)
+  {
+    const pr = netPeers();
+    for (const [id, s] of pr) {
+      let av = peerAvatars.get(id);
+      if (!av) { av = makeFigure(false); scene.add(av.group); peerAvatars.set(id, av); }
+      _peerTmp.set(s.x, s.y - 1.7, s.z);
+      const px = av.group.position.x, pz = av.group.position.z;
+      av.group.position.lerp(_peerTmp, 0.25);
+      av.group.rotation.y = s.yaw + Math.PI;
+      const sp = Math.hypot(av.group.position.x - px, av.group.position.z - pz);  // their speed → limb swing
+      const sw = Math.sin(t * 10) * Math.min(0.7, sp * 7);
+      av.legs[0].rotation.x = sw; av.legs[1].rotation.x = -sw;
+      av.arms[0].rotation.x = -sw; av.arms[1].rotation.x = sw;
+    }
+    for (const [id, av] of peerAvatars) if (!pr.has(id)) { scene.remove(av.group); peerAvatars.delete(id); }
   }
 
   // tin: ease the senses open — thinner fog & mist, a brighter, colder clarity
@@ -1692,7 +1717,8 @@ if (import.meta.env.DEV) {
     resolveWalls: () => { resolveWalls(W, P); player.position.set(P.x, P.y, P.z); return { x: +P.x.toFixed(2), z: +P.z.toFixed(2) }; },
     interiorLights,
     set: (x: number, y: number, z: number) => { P.x = x; P.y = y; P.z = z; P.vx = P.vz = P.vy = P.px = P.pz = 0; player.position.set(x, y, z); },
-    keys,
+    keys, peerAvatars,
+    net: () => ({ connected: netConnected(), peers: [...netPeers().entries()], avatars: peerAvatars.size }),
     diag: () => ({ isLocked: controls.isLocked, loreOpen, keysDown: Object.keys(keys).filter(k => keys[k]) }),
     key: (code: string, down: boolean) => { keys[code] = down; },
   };
