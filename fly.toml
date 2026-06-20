@@ -1,0 +1,19 @@
+# Fly.io config for the Luthadel relay — a tiny always-on VM (free allowance, low latency).
+# Deploy (morning): install flyctl, run `fly launch` (it'll reuse this), then `fly deploy`.
+# Then set the client's VITE_SERVER_URL to  wss://<app-name>.fly.dev  and redeploy the client.
+app = "luthadel-relay"
+primary_region = "lhr"            # change to your nearest region (e.g. iad, ams, syd)
+
+[build]
+  dockerfile = "Dockerfile"
+
+[http_service]
+  internal_port = 8090
+  force_https = true
+  auto_stop_machines = false      # keep it running so matches stay low-latency
+  auto_start_machines = true
+  min_machines_running = 1
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"

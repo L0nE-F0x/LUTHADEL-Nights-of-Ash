@@ -1,20 +1,29 @@
 // =====================================================================================
-// Luthadel — Phase 1 relay server.
+// Luthadel — Phase 1 relay server (host-ready).
 //
-// The simplest multiplayer that works: because the city is a FIXED seed, every client
-// already builds the identical Luthadel — so the server doesn't sync the world at all, it
-// just relays each player's position/orientation to everyone else (~20 Hz snapshots).
+// Because the city is a FIXED seed, every client already builds the identical Luthadel — so
+// the server doesn't sync the world, it just relays each player's position/orientation to
+// everyone else (~20 Hz snapshots). It's a RELAY (each client is authoritative over its own
+// movement) — a stepping stone; Phase 2 makes it authoritative (runs sim.ts) with client
+// prediction + reconciliation + lag-compensated hits. See PVP_ARCHITECTURE.md.
 //
-// This is a RELAY (each client is authoritative over its own movement) — a stepping stone.
-// Phase 2 makes it authoritative (the server runs sim.ts' stepPlayer) with reconciliation
-// + lag-compensated hits. See PVP_ARCHITECTURE.md.
+// An HTTP server wraps the WebSocket server so cloud hosts (Render/Fly) can health-check the
+// port. PORT comes from the host's env (Render/Fly set it); defaults to 8090 locally.
 //
-// Run:  npm run server        (defaults to ws://localhost:8090)
+// Run locally:  npm run server      (ws://localhost:8090)
 // =====================================================================================
+import http from 'node:http';
 import { WebSocketServer } from 'ws';
 
 const PORT = Number(process.env.PORT) || 8090;
-const wss = new WebSocketServer({ port: PORT });
+
+const server = http.createServer((req, res) => {
+  // a plain 200 so platform health checks pass (and you can eyeball it in a browser)
+  res.writeHead(200, { 'content-type': 'text/plain' });
+  res.end(`Luthadel relay up — ${clients.size} online\n`);
+});
+
+const wss = new WebSocketServer({ server });
 
 let nextId = 1;
 const clients = new Map(); // ws -> { id, state }
@@ -49,4 +58,4 @@ setInterval(() => {
   for (const ws of clients.keys()) if (ws.readyState === 1) ws.send(m);
 }, 50);
 
-console.log(`Luthadel relay server listening on ws://localhost:${PORT}`);
+server.listen(PORT, () => console.log(`Luthadel relay listening on :${PORT}`));

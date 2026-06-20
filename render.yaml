@@ -1,0 +1,18 @@
+# Render Blueprint — deploys the Luthadel relay WebSocket server on the FREE tier.
+#
+# Steps (morning):
+#   1. Push this repo to GitHub (done).
+#   2. In Render: New + → Blueprint → pick this repo → Apply. Render auto-sets PORT.
+#   3. When it's live, copy the service URL and set the CLIENT's build-time env var
+#      VITE_SERVER_URL to its wss:// form, e.g.  wss://luthadel-relay.onrender.com
+#      (Netlify → Site settings → Environment variables), then redeploy the client.
+#
+# Note: Render's free web service sleeps after ~15 min idle (first reconnect waits ~30-60s).
+services:
+  - type: web
+    name: luthadel-relay
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: node server/index.mjs
+    healthCheckPath: /

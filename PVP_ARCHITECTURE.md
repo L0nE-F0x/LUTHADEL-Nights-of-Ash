@@ -161,8 +161,35 @@ Vite + a TS server share types cleanly via the `shared/` package.
 - **Scope:** this is a months-of-evenings project. Phase 0 + 1 is the real proof; if the
   movement feels good networked, the rest is "just" content and tuning.
 
-## 10. The very next step
+## 10. Progress
 
-Start **Phase 0**: introduce the seeded PRNG and move world-gen + physics into a `shared/`
-module with a deterministic `stepPlayer`, keeping single-player identical. It's pure
-refactor — no server, no risk to the live site — and it unlocks everything after.
+- ✅ **Phase 0a** — seeded, reproducible world; now locked to ONE fixed seed (`SEED = 1337`)
+  so it's a single canonical Luthadel and every client builds the identical map.
+- ✅ **Phase 0b** — physics is a pure, engine-free `stepPlayer` in `src/sim.ts`.
+- ✅ **Phase 1 (first cut)** — relay multiplayer: `server/index.mjs` (ws relay) + `src/net.ts`
+  (prod-safe client) + `makeFigure` avatars in `main.ts`. Verified end-to-end locally.
+- ⏳ **Phase 2** — make the server authoritative (it imports `sim.ts` and runs `stepPlayer`);
+  client prediction + reconciliation + snapshot interpolation; then combat. Needs the
+  collision world on the server — extract the deterministic `ROOFS`/`METALS` gen into a
+  shared engine-free `world.ts` (the gen currently lives in `main.ts`, intertwined with mesh
+  building; the client keeps the meshes, both sides share the layout/collision data). This is
+  the main backend task to do together.
+
+## 11. Deploying the relay server (free)
+
+The client is already prod-safe: with no `VITE_SERVER_URL` it stays single-player, so the
+Netlify site is unaffected until a server exists.
+
+**Render (simplest, free; sleeps when idle):** push to GitHub → Render → New + → *Blueprint*
+→ this repo (`render.yaml`) → Apply. Copy the live URL.
+
+**Fly.io (free allowance, always-on, lower latency):** `flyctl` → `fly launch` (uses
+`fly.toml` + `Dockerfile`) → `fly deploy`. Copy `https://<app>.fly.dev`.
+
+**Wire the client to it:** set `VITE_SERVER_URL` to the server's **wss://** URL (Render:
+`wss://<svc>.onrender.com`, Fly: `wss://<app>.fly.dev`) in Netlify → Site settings →
+Environment variables, then redeploy the client. See `.env.example`.
+
+The relay is plain JS (`ws` only). When Phase 2 makes the server authoritative it will import
+`sim.ts` (TypeScript) — at that point add a TS step (e.g. `tsx`, or precompile) to the
+server's start command; the `Dockerfile` already copies `src/` in anticipation.
