@@ -2,7 +2,7 @@ import './style.css';
 import { mulberry32 } from './rng';
 import { stepPlayer, steelLeap, surfaceAt, resolveWalls, metalsNear, newPlayerState, GRID, gkey } from './sim';
 import type { Metal, Roof, SimWorld, PlayerState, PlayerInput } from './sim';
-import { netStart, netSend, netPeers, netConnected } from './net';
+import { netStart, netSend, netPeers, netConnected, netInterpolated } from './net';
 import * as THREE from 'three';
 import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
@@ -1284,7 +1284,6 @@ let jumpQueued = false;
 
 // multiplayer (Phase 1 relay): the other Mistborn, drawn as cloaked avatars
 const peerAvatars = new Map<number, Figure>();
-const _peerTmp = new THREE.Vector3();
 netStart();
 
 // further allomantic powers
@@ -1534,18 +1533,17 @@ function animate() {
     netSend(P.x, P.y, P.z, _euler.y, dt);           // broadcast our position to the other Mistborn
   }
 
-  // draw the other players as cloaked avatars (Phase 1 relay: smoothed toward their latest state)
+  // draw the other players as cloaked avatars, smoothly interpolated ~100 ms in the past
   {
-    const pr = netPeers();
+    const pr = netInterpolated();
     for (const [id, s] of pr) {
       let av = peerAvatars.get(id);
       if (!av) { av = makeFigure(false); scene.add(av.group); peerAvatars.set(id, av); }
-      _peerTmp.set(s.x, s.y - 1.7, s.z);
       const px = av.group.position.x, pz = av.group.position.z;
-      av.group.position.lerp(_peerTmp, 0.25);
-      av.group.rotation.y = s.yaw + Math.PI;
-      const sp = Math.hypot(av.group.position.x - px, av.group.position.z - pz);  // their speed → limb swing
-      const sw = Math.sin(t * 10) * Math.min(0.7, sp * 7);
+      av.group.position.set(s.x, s.y - 1.7, s.z);    // feet under their eye; interp already smooth
+      av.group.rotation.y = s.yaw;                    // face their look direction
+      const sp = Math.hypot(s.x - px, s.z - pz);      // per-frame travel → limb swing
+      const sw = Math.sin(t * 10) * Math.min(0.7, sp * 18);
       av.legs[0].rotation.x = sw; av.legs[1].rotation.x = -sw;
       av.arms[0].rotation.x = -sw; av.arms[1].rotation.x = sw;
     }
