@@ -27,31 +27,38 @@ function serverUrl(): string | null {
   return null;                                            // hosted with no server → single-player
 }
 
+let _retry = 0;
 export function netStart() {
   const url = serverUrl();
-  if (!url) return;
-  try {
-    const sock = new WebSocket(url);
-    ws = sock;
-    sock.onopen = () => { connected = true; console.info('[net] connected', url); };
-    sock.onclose = () => { connected = false; if (ws === sock) ws = null; buffers.clear(); };
-    sock.onerror = () => { /* no server running — stay single-player, no noise */ };
-    sock.onmessage = (e) => {
-      let m: { t: string; [k: string]: unknown };
-      try { m = JSON.parse(e.data as string); } catch { return; }
-      if (m.t === 'hello') { myId = m.id as number; }
-      else if (m.t === 'snapshot') {
-        const now = performance.now();
-        for (const p of m.players as { id: number; s: PeerState }[]) {
-          if (p.id === myId) continue;
-          let b = buffers.get(p.id);
-          if (!b) { b = []; buffers.set(p.id, b); }
-          b.push({ x: p.s.x, y: p.s.y, z: p.s.z, yaw: p.s.yaw, t: now });
-          if (b.length > 12) b.shift();
-        }
-      } else if (m.t === 'leave') { buffers.delete(m.id as number); }
-    };
-  } catch { ws = null; }
+  if (url) connect(url);
+}
+function scheduleReconnect(url: string) {
+  // backoff 1s,2s,4s… capped at 15s — recovers when a sleeping free host wakes / restarts
+  const delay = Math.min(15000, 1000 * 2 ** _retry++);
+  setTimeout(() => { if (!connected) connect(url); }, delay);
+}
+function connect(url: string) {
+  let sock: WebSocket;
+  try { sock = new WebSocket(url); } catch { scheduleReconnect(url); return; }
+  ws = sock;
+  sock.onopen = () => { connected = true; _retry = 0; console.info('[net] connected', url); };
+  sock.onclose = () => { connected = false; if (ws === sock) ws = null; buffers.clear(); scheduleReconnect(url); };
+  sock.onerror = () => { /* a close follows → reconnect; no console noise */ };
+  sock.onmessage = (e) => {
+    let m: { t: string; [k: string]: unknown };
+    try { m = JSON.parse(e.data as string); } catch { return; }
+    if (m.t === 'hello') { myId = m.id as number; }
+    else if (m.t === 'snapshot') {
+      const now = performance.now();
+      for (const p of m.players as { id: number; s: PeerState }[]) {
+        if (p.id === myId) continue;
+        let b = buffers.get(p.id);
+        if (!b) { b = []; buffers.set(p.id, b); }
+        b.push({ x: p.s.x, y: p.s.y, z: p.s.z, yaw: p.s.yaw, t: now });
+        if (b.length > 12) b.shift();
+      }
+    } else if (m.t === 'leave') { buffers.delete(m.id as number); }
+  };
 }
 
 // throttled to ~20 Hz; only sends while connected
