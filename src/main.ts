@@ -334,7 +334,7 @@ const scene = new THREE.Scene();
 const FOG = 0x140d0a;
 scene.fog = new THREE.FogExp2(FOG, 0.010);   // a touch thinner, so the avenue reveals its depth into the mist
 
-const camera = new THREE.PerspectiveCamera(72, window.innerWidth / window.innerHeight, 0.1, 900);
+const camera = new THREE.PerspectiveCamera(72, window.innerWidth / window.innerHeight, 0.1, 1600);
 camera.position.set(0, 1.7, 44);
 
 // =================== cinematic post-processing ===================
@@ -402,7 +402,7 @@ composer.addPass(new SMAAPass(window.innerWidth, window.innerHeight));
   g.fillStyle = grd; g.fillRect(0, 0, 16, 256);
   const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
   const sky = new THREE.Mesh(
-    new THREE.SphereGeometry(500, 32, 16),
+    new THREE.SphereGeometry(1000, 32, 16),
     new THREE.MeshBasicMaterial({ map: tex, side: THREE.BackSide, fog: false, depthWrite: false }),
   );
   sky.userData.sky = true;   // never a shadow caster/receiver
@@ -483,8 +483,40 @@ const addMetal = (x: number, y: number, z: number, r = 1) =>
 
 // building footprints, collected as we raise the street — used later for
 // landing on rooftops and for not walking through walls while leaping.
-type Roof = { minX: number; maxX: number; minZ: number; maxZ: number; top: number };
+type Roof = { minX: number; maxX: number; minZ: number; maxZ: number; top: number; _t?: number };
 const ROOFS: Roof[] = [];
+
+// ---- spatial hash grid -----------------------------------------------------------------
+// Keeps the per-frame collision (ROOFS) and metal-sight (METALS) scans O(nearby) instead
+// of O(all), so the city can grow huge without per-frame cost. Built once after world-gen.
+const GRID = 24;                                   // cell size (m); a few cells cover any query radius
+const gkey = (cx: number, cz: number) => cx * 100000 + cz;
+const metalGrid = new Map<number, Metal[]>();
+const roofGrid = new Map<number, Roof[]>();
+const _near: Metal[] = [];
+function metalsNear(x: number, z: number, range: number): Metal[] {
+  _near.length = 0;
+  const c0x = Math.floor((x - range) / GRID), c1x = Math.floor((x + range) / GRID);
+  const c0z = Math.floor((z - range) / GRID), c1z = Math.floor((z + range) / GRID);
+  for (let cx = c0x; cx <= c1x; cx++) for (let cz = c0z; cz <= c1z; cz++) {
+    const a = metalGrid.get(gkey(cx, cz));
+    if (a) for (let i = 0; i < a.length; i++) _near.push(a[i]);
+  }
+  return _near;
+}
+function buildGrids() {
+  for (const m of METALS) {
+    const k = gkey(Math.floor(m.pos.x / GRID), Math.floor(m.pos.z / GRID));
+    let a = metalGrid.get(k); if (!a) { a = []; metalGrid.set(k, a); } a.push(m);
+  }
+  for (const r of ROOFS) {                          // a footprint is inserted into every cell it overlaps
+    const x0 = Math.floor(r.minX / GRID), x1 = Math.floor(r.maxX / GRID);
+    const z0 = Math.floor(r.minZ / GRID), z1 = Math.floor(r.maxZ / GRID);
+    for (let cx = x0; cx <= x1; cx++) for (let cz = z0; cz <= z1; cz++) {
+      const k = gkey(cx, cz); let a = roofGrid.get(k); if (!a) { a = []; roofGrid.set(k, a); } a.push(r);
+    }
+  }
+}
 
 // Lantern light. LORE: Luthadel in the Final Empire (Mistborn Era 1) has NO
 // electricity — every street light is an OPEN FLAME in an iron-bracketed lantern
@@ -498,7 +530,7 @@ const flameTex = softSprite('rgba(255,172,82,1)');
 const lampPostMat = new THREE.MeshStandardMaterial({ color: 0x100c08, roughness: 1, metalness: 0 });
 const lampPostGeo = new THREE.CylinderGeometry(0.1, 0.16, 4.6, 6);
 const lampHaloMat = new THREE.SpriteMaterial({ map: lampGlow, transparent: true, opacity: 0.6, depthWrite: false, blending: THREE.AdditiveBlending });
-type Lamp = { x: number; z: number };
+type Lamp = { x: number; z: number; halo: THREE.Sprite };
 const lamps: Lamp[] = [];
 function placeLamp(lx: number, lz: number) {
   const halo = new THREE.Sprite(lampHaloMat);
@@ -506,7 +538,7 @@ function placeLamp(lx: number, lz: number) {
   const post = new THREE.Mesh(lampPostGeo, lampPostMat);
   post.position.set(lx, 2.3, lz); scene.add(post);
   addMetal(lx, 4.3, lz, 1.6); // the lantern's heavy iron bracket — a push/pull anchor
-  lamps.push({ x: lx, z: lz });
+  lamps.push({ x: lx, z: lz, halo });
 }
 // a fixed pool of real flame-lights that chase the player, and a matching pool of
 // guttering flame sprites for the nearest lamps (the unmistakable "it's fire" tell)
@@ -551,9 +583,9 @@ for (let i = 0; i < SHAFTS; i++) {
 // =================== ground ===================
 {
   const cob = cobbleSet();
-  for (const t of [cob.map, cob.normalMap, cob.roughnessMap]) t.repeat.set(96, 96);  // keep stone scale on the bigger plane
+  for (const t of [cob.map, cob.normalMap, cob.roughnessMap]) t.repeat.set(200, 200);  // keep stone scale on the bigger plane
   const ground = new THREE.Mesh(
-    new THREE.PlaneGeometry(760, 760),
+    new THREE.PlaneGeometry(1600, 1600),
     new THREE.MeshStandardMaterial({
       map: cob.map, normalMap: cob.normalMap, roughnessMap: cob.roughnessMap,
       normalScale: new THREE.Vector2(0.6, 0.6),
@@ -645,7 +677,7 @@ function fillBlock(parent: THREE.Object3D, x0: number, x1: number, z0: number, z
 // ---- the walled district: a parametric grid that scales to a whole city ----
 // Columns march out to either side of a central avenue (x≈0) that runs to the gate;
 // rows march from the back wall (+Z) toward the gate and Kredik Shaw (−Z).
-const BW = 18, BD = 18, ST = 9, AV = 20, COLS = 4, ROWS = 8;
+const BW = 18, BD = 18, ST = 9, AV = 20, COLS = 9, ROWS = 20;
 const FRONT_Z = -150;                                    // z of the front-most row of blocks
 const colCenters: [number, number][] = [];              // [x0,x1] per block column (the avenue is the central gap)
 for (const side of [-1, 1] as const)
@@ -1206,6 +1238,7 @@ for (const [bx, bz] of [[-5, 16], [5.2, -2], [-5, -30], [14, 6], [-28, -8]] as c
 // =================== controls ===================
 const controls = new PointerLockControls(camera, document.body);
 const player = controls.object;
+player.position.set(0, 1.7, ZB - 16);   // spawn at the back wall, the full avenue receding toward Kredik Shaw
 
 const keys: Record<string, boolean> = {};
 const velocity = new THREE.Vector3();
@@ -1238,8 +1271,9 @@ let lampTick = 0;          // throttles re-binding the lamp-light pool to the ne
 let burning = false;
 let sightFlare = 0;       // brief auto-burn that flashes the lines on each leap
 const SIGHT_RANGE = 34;
-const sightPos = new Float32Array(METALS.length * 2 * 3);
-const sightCol = new Float32Array(METALS.length * 2 * 3);
+const SIGHT_MAX = Math.min(1200, METALS.length);   // the sight only spans nearby metals now — cap drawn segments
+const sightPos = new Float32Array(SIGHT_MAX * 2 * 3);
+const sightCol = new Float32Array(SIGHT_MAX * 2 * 3);
 const sightGeo = new THREE.BufferGeometry();
 sightGeo.setAttribute('position', new THREE.BufferAttribute(sightPos, 3));
 sightGeo.setAttribute('color', new THREE.BufferAttribute(sightCol, 3));
@@ -1281,43 +1315,38 @@ function updateSight(t: number) {
   sight.visible = true;
   _chest.copy(player.position).y -= 0.35; // lines spring from the sternum
   const pulse = 0.82 + 0.18 * Math.sin(t * 7);
-  let nodeI = 1;            // node 0 is reserved for the aimed anchor
-  let hasTarget = false;
-  for (let i = 0; i < METALS.length; i++) {
-    const m = METALS[i];
-    const o = i * 6;
+  // only the metals near the player can be in sight-range — query the grid, not all metals
+  const near = metalsNear(player.position.x, player.position.z, 38);
+  let j = 0, nodeI = 1, hasTarget = false;
+  for (let i = 0; i < near.length && j < SIGHT_MAX; i++) {
+    const m = near[i];
     const d = _chest.distanceTo(m.pos);
     const isTarget = m.pos === pullTarget;
-    if (d < SIGHT_RANGE || isTarget) {
-      const a = Math.max(0, 1 - d / SIGHT_RANGE);
-      const b = isTarget ? pulse : Math.min(1, a * a * 1.7 * m.r) * pulse;
-      sightPos[o] = _chest.x; sightPos[o + 1] = _chest.y; sightPos[o + 2] = _chest.z;
-      sightPos[o + 3] = m.pos.x; sightPos[o + 4] = m.pos.y; sightPos[o + 5] = m.pos.z;
-      if (isTarget) { // the anchor you're pulling on flares bright blue-white (>1 so bloom blazes)
-        sightCol[o] = 0.7 * b; sightCol[o + 1] = 1.0 * b; sightCol[o + 2] = 1.3 * b;
-        sightCol[o + 3] = 1.1 * b; sightCol[o + 4] = 1.25 * b; sightCol[o + 5] = 1.4 * b;
-      } else {
-        sightCol[o] = 0.20 * b; sightCol[o + 1] = 0.52 * b; sightCol[o + 2] = 1.2 * b;  // faint at the chest
-        sightCol[o + 3] = 0.55 * b; sightCol[o + 4] = 0.95 * b; sightCol[o + 5] = 1.35 * b; // blazing at the metal
-      }
-      // a glowing node where the line touches metal
-      if (isTarget) {
-        hasTarget = true;
-        const n = nodes[0]; n.visible = true; n.position.copy(m.pos); n.scale.set(1.7, 1.7, 1);
-        const nm = n.material as THREE.SpriteMaterial; nm.opacity = pulse; nm.color.setRGB(0.85, 0.95, 1.0);
-      } else if (nodeI < NODE_N) {
-        const n = nodes[nodeI++]; n.visible = true; n.position.copy(m.pos);
-        const sz = 0.45 + a * 0.7; n.scale.set(sz, sz, 1);
-        const nm = n.material as THREE.SpriteMaterial; nm.opacity = 0.4 * a * a * pulse; nm.color.setRGB(0.35, 0.6, 1.0);
-      }
+    if (!(d < SIGHT_RANGE || isTarget)) continue;
+    const o = j * 6; j++;
+    const a = Math.max(0, 1 - d / SIGHT_RANGE);
+    const b = isTarget ? pulse : Math.min(1, a * a * 1.7 * m.r) * pulse;
+    sightPos[o] = _chest.x; sightPos[o + 1] = _chest.y; sightPos[o + 2] = _chest.z;
+    sightPos[o + 3] = m.pos.x; sightPos[o + 4] = m.pos.y; sightPos[o + 5] = m.pos.z;
+    if (isTarget) { // the anchor you're pulling on flares bright blue-white (>1 so bloom blazes)
+      sightCol[o] = 0.7 * b; sightCol[o + 1] = 1.0 * b; sightCol[o + 2] = 1.3 * b;
+      sightCol[o + 3] = 1.1 * b; sightCol[o + 4] = 1.25 * b; sightCol[o + 5] = 1.4 * b;
     } else {
-      // collapse to a zero-length, unlit segment so it draws nothing
-      sightPos[o] = sightPos[o + 3] = m.pos.x;
-      sightPos[o + 1] = sightPos[o + 4] = m.pos.y;
-      sightPos[o + 2] = sightPos[o + 5] = m.pos.z;
-      for (let k = 0; k < 6; k++) sightCol[o + k] = 0;
+      sightCol[o] = 0.20 * b; sightCol[o + 1] = 0.52 * b; sightCol[o + 2] = 1.2 * b;  // faint at the chest
+      sightCol[o + 3] = 0.55 * b; sightCol[o + 4] = 0.95 * b; sightCol[o + 5] = 1.35 * b; // blazing at the metal
+    }
+    // a glowing node where the line touches metal
+    if (isTarget) {
+      hasTarget = true;
+      const n = nodes[0]; n.visible = true; n.position.copy(m.pos); n.scale.set(1.7, 1.7, 1);
+      const nm = n.material as THREE.SpriteMaterial; nm.opacity = pulse; nm.color.setRGB(0.85, 0.95, 1.0);
+    } else if (nodeI < NODE_N) {
+      const n = nodes[nodeI++]; n.visible = true; n.position.copy(m.pos);
+      const sz = 0.45 + a * 0.7; n.scale.set(sz, sz, 1);
+      const nm = n.material as THREE.SpriteMaterial; nm.opacity = 0.4 * a * a * pulse; nm.color.setRGB(0.35, 0.6, 1.0);
     }
   }
+  sightGeo.setDrawRange(0, j * 2);   // draw only the active segments
   if (!hasTarget && nodes[0].visible) nodes[0].visible = false;
   for (let k = nodeI; k < NODE_N; k++) if (nodes[k].visible) nodes[k].visible = false;
   // the fat, pulsing beam to the anchor you're actually pushing/pulling on
@@ -1336,26 +1365,35 @@ function updateSight(t: number) {
 // height of whatever you'd stand on at (x,z): a rooftop if you're over one, else the street (0)
 function surfaceAt(x: number, z: number): number {
   let s = 0;
-  for (const r of ROOFS) {
-    if (x >= r.minX && x <= r.maxX && z >= r.minZ && z <= r.maxZ && r.top > s) s = r.top;
-  }
+  const a = roofGrid.get(gkey(Math.floor(x / GRID), Math.floor(z / GRID)));   // the cell holds every roof covering (x,z)
+  if (a) for (let i = 0; i < a.length; i++) { const r = a[i]; if (x >= r.minX && x <= r.maxX && z >= r.minZ && z <= r.maxZ && r.top > s) s = r.top; }
   return s;
 }
 
 // shove the player out of any building footprint they're inside while below its roof
+let _wallTick = 0;
 function resolveWalls() {
   const p = player.position;
   const M = 0.4; // player half-width
-  for (const r of ROOFS) {
-    if (p.y >= r.top + EYE - 0.05) continue;                 // feet at/above this roof — no wall
-    if (p.x <= r.minX - M || p.x >= r.maxX + M) continue;
-    if (p.z <= r.minZ - M || p.z >= r.maxZ + M) continue;
-    // inside the expanded footprint: eject along the axis of least penetration
-    const dl = p.x - (r.minX - M), dr = (r.maxX + M) - p.x;
-    const db = p.z - (r.minZ - M), df = (r.maxZ + M) - p.z;
-    const mx = Math.min(dl, dr), mz = Math.min(db, df);
-    if (mx < mz) p.x = dl < dr ? r.minX - M : r.maxX + M;
-    else p.z = db < df ? r.minZ - M : r.maxZ + M;
+  _wallTick++;   // mark, so a roof spanning several cells is only handled once
+  const c0x = Math.floor((p.x - M) / GRID), c1x = Math.floor((p.x + M) / GRID);
+  const c0z = Math.floor((p.z - M) / GRID), c1z = Math.floor((p.z + M) / GRID);
+  for (let cx = c0x; cx <= c1x; cx++) for (let cz = c0z; cz <= c1z; cz++) {
+    const a = roofGrid.get(gkey(cx, cz));
+    if (!a) continue;
+    for (let i = 0; i < a.length; i++) {
+      const r = a[i];
+      if (r._t === _wallTick) continue; r._t = _wallTick;
+      if (p.y >= r.top + EYE - 0.05) continue;                 // feet at/above this roof — no wall
+      if (p.x <= r.minX - M || p.x >= r.maxX + M) continue;
+      if (p.z <= r.minZ - M || p.z >= r.maxZ + M) continue;
+      // inside the expanded footprint: eject along the axis of least penetration
+      const dl = p.x - (r.minX - M), dr = (r.maxX + M) - p.x;
+      const db = p.z - (r.minZ - M), df = (r.maxZ + M) - p.z;
+      const mx = Math.min(dl, dr), mz = Math.min(db, df);
+      if (mx < mz) p.x = dl < dr ? r.minX - M : r.maxX + M;
+      else p.z = db < df ? r.minZ - M : r.maxZ + M;
+    }
   }
 }
 
@@ -1365,8 +1403,9 @@ function steelPush() {
   if (loreOpen || !controls.isLocked) return;
   const p = player.position;
   let best: THREE.Vector3 | null = null, bestScore = -1, bestUp = 0;
-  for (let i = 0; i < METALS.length; i++) {
-    const m = METALS[i], mp = m.pos;
+  const near = metalsNear(p.x, p.z, LEAP_RANGE);
+  for (let i = 0; i < near.length; i++) {
+    const m = near[i], mp = m.pos;
     const dx = p.x - mp.x, dy = p.y - mp.y, dz = p.z - mp.z;
     const dist = Math.hypot(dx, dy, dz);
     if (dist > LEAP_RANGE || dist < 0.6) continue;
@@ -1391,8 +1430,9 @@ function aimMetal(): THREE.Vector3 | null {
   camera.getWorldDirection(_fwd);
   const p = player.position;
   let best: THREE.Vector3 | null = null, bestScore = -Infinity;
-  for (let i = 0; i < METALS.length; i++) {
-    const m = METALS[i];
+  const near = metalsNear(p.x, p.z, 36);
+  for (let i = 0; i < near.length; i++) {
+    const m = near[i];
     _to.copy(m.pos).sub(p);
     const dist = _to.length();
     if (dist < 1.4 || dist > 36) continue;
@@ -1612,6 +1652,10 @@ function animate() {
       if (lm && (lm.x - cp.x) ** 2 + (lm.z - cp.z) ** 2 < 22 * 22) { shaftPool[i].visible = true; shaftPool[i].position.set(lm.x, 2.25, lm.z); }
       else shaftPool[i].visible = false;
     }
+    for (let i = 0; i < lamps.length; i++) {            // distant halos are fogged to almost nothing — skip their additive fill
+      const lm = lamps[i];
+      lm.halo.visible = (lm.x - cp.x) ** 2 + (lm.z - cp.z) ** 2 < 145 * 145;
+    }
   }
   for (let i = 0; i < LAMP_LIGHTS && lamps[i]; i++) {
     // a guttering flame — irregular, dipping; never the steady output of a bulb
@@ -1735,6 +1779,7 @@ scene.traverse((o) => {
   }
 });
 
+buildGrids();   // index every ROOFS footprint + METALS point into the spatial grid before the loop
 animate();
 
 // dev-only handle so the scene can be driven/inspected from the preview harness
@@ -1750,6 +1795,8 @@ if (import.meta.env.DEV) {
     push: () => steelPush(),
     state: () => ({ y: +player.position.y.toFixed(2), vy: +vy.toFixed(2), grounded, tinAmt: +tinAmt.toFixed(2), pulling, target: pullTarget ? pullTarget.toArray().map(n => +n.toFixed(1)) : null }),
     surfaceAt: (x: number, z: number) => surfaceAt(x, z),
+    metalsNear: (x: number, z: number, r: number) => metalsNear(x, z, r).slice(),
+    gridStats: () => ({ metalCells: metalGrid.size, roofCells: roofGrid.size }),
     set: (x: number, y: number, z: number) => { player.position.set(x, y, z); vy = 0; pullVel.set(0, 0, 0); },
     walkers, keys,
     diag: () => ({ isLocked: controls.isLocked, loreOpen, keysDown: Object.keys(keys).filter(k => keys[k]) }),
