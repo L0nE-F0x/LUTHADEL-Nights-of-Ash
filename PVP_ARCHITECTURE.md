@@ -178,8 +178,13 @@ Vite + a TS server share types cleanly via the `shared/` package.
   (health bar + damage vignette + hit-confirm + downed banner), shown only while connected.
   ⚠️ Limits: per-frame sphere check (fast coins can tunnel; no lag-comp), and a coin that hits on
   my screen keeps flying on peers' screens (no despawn relay). Both are fixed by server authority.
-- ⏳ **Phase 2C / authority** — push/pull **players** (`applyAllomanticImpulse` knockback relay),
-  then make the server authoritative (it imports `sim.ts` and runs `stepPlayer`);
+- ✅ **Phase 2C** — push/pull **players** (Allomantic knockback): hold Q / right-click while
+  aiming at a Mistborn (`aimPeer` gaze-cone test vs interpolated peers) to blast them — edge-
+  triggered, one impulse per press → `{t:'shove'}` relay → victim applies
+  `applyAllomanticImpulse` + lift, shover takes a smaller self-recoil (push = fly apart, pull =
+  yank together). Verified by a relay smoke test + a real-sim physics test (≈5.3 m knockback).
+  Still trust-based (see 2B limits). Tunables live by the combat state in `main.ts`.
+- ⏳ **Authority** — make the server authoritative (it imports `sim.ts` and runs `stepPlayer`);
   client prediction + reconciliation + snapshot interpolation; then combat. Needs the
   collision world on the server — extract the deterministic `ROOFS`/`METALS` gen into a
   shared engine-free `world.ts` (the gen currently lives in `main.ts`, intertwined with mesh

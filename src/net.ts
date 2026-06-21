@@ -18,6 +18,7 @@ const buffers = new Map<number, Sample[]>();   // peer id -> recent timestamped 
 const _interp = new Map<number, PeerState>();  // reused output of netInterpolated()
 let _fires: FireEvent[] = [];                  // coinshots from other players, drained each frame
 let _hits: { dmg: number; from: number }[] = []; // coinshots that struck ME, drained each frame
+let _shoves: { fx: number; fy: number; fz: number; strength: number; pull: boolean }[] = []; // Allomantic knockback dealt to ME
 let ws: WebSocket | null = null;
 let myId = 0;
 let connected = false;
@@ -65,6 +66,8 @@ function connect(url: string) {
       _fires.push({ id: m.id as number, x: s.x, y: s.y, z: s.z, dx: s.dx, dy: s.dy, dz: s.dz });
     } else if (m.t === 'hit') {
       if ((m.target as number) === myId) _hits.push({ dmg: m.dmg as number, from: m.from as number });
+    } else if (m.t === 'shove') {
+      if ((m.target as number) === myId) _shoves.push({ fx: m.fx as number, fy: m.fy as number, fz: m.fz as number, strength: m.strength as number, pull: !!m.pull });
     } else if (m.t === 'leave') { buffers.delete(m.id as number); }
   };
 }
@@ -94,6 +97,14 @@ export function netHit(target: number, dmg: number) {
 }
 // drain the hits that landed on me since last frame
 export function netTakeHits(): { dmg: number; from: number }[] { const a = _hits; _hits = []; return a; }
+
+// tell the server I steel-pushed / iron-pulled player `target`, from my position (fx,fy,fz)
+export function netShove(target: number, fx: number, fy: number, fz: number, strength: number, pull: boolean) {
+  if (!connected || !ws) return;
+  ws.send(JSON.stringify({ t: 'shove', target, fx: +fx.toFixed(2), fy: +fy.toFixed(2), fz: +fz.toFixed(2), strength, pull }));
+}
+// drain the knockback impulses dealt to me since last frame
+export function netTakeShoves(): { fx: number; fy: number; fz: number; strength: number; pull: boolean }[] { const a = _shoves; _shoves = []; return a; }
 
 function lerpAngle(a: number, b: number, t: number): number {
   let d = (b - a) % (Math.PI * 2);

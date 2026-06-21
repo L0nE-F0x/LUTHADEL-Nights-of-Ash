@@ -2,7 +2,7 @@ import './style.css';
 import { mulberry32 } from './rng';
 import { stepPlayer, steelLeap, surfaceAt, resolveWalls, metalsNear, newPlayerState, GRID, gkey } from './sim';
 import type { Metal, Roof, SimWorld, PlayerState, PlayerInput } from './sim';
-import { netStart, netSend, netPeers, netConnected, netInterpolated, netFire, netTakeFires, netId, netHit, netTakeHits } from './net';
+import { netStart, netSend, netPeers, netConnected, netInterpolated, netFire, netTakeFires, netId, netHit, netTakeHits, netShove, netTakeShoves } from './net';
 import * as combat from './combat';
 import * as THREE from 'three';
 import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
@@ -1332,6 +1332,30 @@ const hitMark = document.getElementById('hitmark')!;
 const hurtEl = document.getElementById('hurt')!;
 const downedEl = document.getElementById('downed')!;
 
+// Phase 2C: Allomantic push/pull of *players* — a steel-push hurls the Mistborn you're aiming
+// at away from you; an iron-pull yanks them toward you (and recoils you). Every Mistborn carries
+// metal (coins, vials), so any player is a valid anchor. Edge-triggered: one blast per press.
+const SHOVE_RANGE = 32;        // how far the push/pull reaches another player
+const SHOVE_ALIGN = 0.94;      // gaze must point this closely at them (dot of unit vectors)
+const SHOVE_STR = 24;          // impulse dealt to the target (≈5 m of knockback)
+const SELF_RECOIL = 7;         // impulse back onto me (the duel pushes both ways)
+const SHOVE_LIFT = 4;          // a little upward pop so the hit reads against the floaty gravity
+let prevPush = false, prevPull = false;
+const _gaze = new THREE.Vector3(), _toPeer = new THREE.Vector3(), _peerAnchor = new THREE.Vector3();
+// which peer am I aiming at, within range and inside the gaze cone? (torso-centred) → or null
+function aimPeer(targets: Map<number, { x: number; y: number; z: number; yaw: number }>) {
+  camera.getWorldDirection(_gaze);
+  let best: { id: number; x: number; y: number; z: number } | null = null, bestDot = SHOVE_ALIGN;
+  for (const [id, s] of targets) {
+    _toPeer.set(s.x - P.x, (s.y - 0.4) - P.y, s.z - P.z);
+    const d = _toPeer.length();
+    if (d < 1.5 || d > SHOVE_RANGE) continue;
+    const dot = _toPeer.divideScalar(d).dot(_gaze);
+    if (dot > bestDot) { bestDot = dot; best = { id, x: s.x, y: s.y - 0.4, z: s.z }; }
+  }
+  return best;
+}
+
 // further allomantic powers
 let pulling = false;                       // iron-pull (right-mouse): yank toward an anchor
 let pushing = false;                        // steel-push (hold Q): shove off the gazed anchor
@@ -1573,8 +1597,24 @@ function animate() {
     inp.pewter = !!(keys['ShiftLeft'] || keys['ShiftRight']);
     inp.pushing = pushing; inp.pulling = pulling; inp.jump = jumpQueued; inp.dt = dt;
     jumpQueued = false;
+    // knockback others dealt me — fold it into my momentum so THIS step carries me flying
+    for (const sh of netTakeShoves()) { combat.applyAllomanticImpulse(P, sh.fx, sh.fy, sh.fz, sh.strength, sh.pull); P.vy += SHOVE_LIFT; }
     stepPlayer(W, P, inp);
     pullTarget = P.target;
+    // Allomantic push/pull of another Mistborn: blast the one I'm aiming at on the press edge
+    if (netConnected() && (pushing || pulling)) {
+      const aimed = aimPeer(netInterpolated());
+      if (aimed) {
+        _peerAnchor.set(aimed.x, aimed.y, aimed.z);
+        pullTarget = _peerAnchor;                    // point the fat sight-beam at them
+        const pull = pulling && !pushing;            // if both held, push wins
+        if ((pushing && !prevPush) || (pulling && !prevPull)) {
+          netShove(aimed.id, P.x, P.y, P.z, SHOVE_STR, pull);                 // they get hurled
+          combat.applyAllomanticImpulse(P, aimed.x, aimed.y, aimed.z, SELF_RECOIL, pull); // I recoil
+        }
+      }
+    }
+    prevPush = pushing; prevPull = pulling;
     if (P.leaped) sightFlare = 0.7;                 // flash the steel-lines on a leap
     player.position.set(P.x, P.y, P.z);
     netSend(P.x, P.y, P.z, _euler.y, dt);           // broadcast our position to the other Mistborn

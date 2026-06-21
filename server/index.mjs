@@ -48,6 +48,10 @@ wss.on('connection', (ws) => {
         const out = JSON.stringify({ t: 'hit', from: c.id, target: msg.target, dmg: msg.dmg });
         for (const sock of clients.keys()) if (sock !== ws && sock.readyState === 1) sock.send(out);
       }
+      else if (msg.t === 'shove') {                // an Allomantic push/pull — relay the knockback impulse
+        const out = JSON.stringify({ t: 'shove', from: c.id, target: msg.target, fx: msg.fx, fy: msg.fy, fz: msg.fz, strength: msg.strength, pull: msg.pull });
+        for (const sock of clients.keys()) if (sock !== ws && sock.readyState === 1) sock.send(out);
+      }
     } catch { /* ignore malformed */ }
   });
 
