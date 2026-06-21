@@ -2,7 +2,7 @@ import './style.css';
 import { mulberry32 } from './rng';
 import { stepPlayer, steelLeap, surfaceAt, resolveWalls, metalsNear, newPlayerState, GRID, gkey } from './sim';
 import type { Metal, Roof, SimWorld, PlayerState, PlayerInput } from './sim';
-import { netStart, netSend, netPeers, netConnected, netInterpolated } from './net';
+import { netStart, netSend, netPeers, netConnected, netInterpolated, netFire, netTakeFires, netId } from './net';
 import * as combat from './combat';
 import * as THREE from 'three';
 import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
@@ -1293,6 +1293,26 @@ let jumpQueued = false;
 const peerAvatars = new Map<number, Figure>();
 netStart();
 
+// coinshots (Phase 2): flick a steel-pushed coin at the other Mistborn. Visual + networked
+// here; damage/health come next. Fires on left-click (rate-capped); everyone sees every coin.
+const coinGeo = new THREE.SphereGeometry(0.09, 6, 5);
+const coinMat = new THREE.MeshBasicMaterial({ color: 0xffd25a });
+const coins: { p: combat.Projectile; mesh: THREE.Mesh }[] = [];
+let _lastFire = 0;
+const _aim = new THREE.Vector3();
+function fireCoin() {
+  if (!controls.isLocked || loreOpen) return;
+  const now = performance.now();
+  if (now - _lastFire < 220) return;            // fire-rate cap
+  _lastFire = now;
+  camera.getWorldDirection(_aim);
+  const ox = P.x + _aim.x * 0.6, oy = P.y - 0.2 + _aim.y * 0.6, oz = P.z + _aim.z * 0.6;
+  const proj = combat.spawnCoin(netId(), ox, oy, oz, _aim.x, _aim.y, _aim.z);
+  const mesh = new THREE.Mesh(coinGeo, coinMat); mesh.position.set(ox, oy, oz); mesh.userData.noShadow = true; scene.add(mesh);
+  coins.push({ p: proj, mesh });
+  netFire(ox, oy, oz, _aim.x, _aim.y, _aim.z);
+}
+
 // further allomantic powers
 let pulling = false;                       // iron-pull (right-mouse): yank toward an anchor
 let pushing = false;                        // steel-push (left-mouse): shove off the gazed anchor
@@ -1428,7 +1448,7 @@ addEventListener('keyup', (e) => {
 });
 // mouse: left steel-pushes (shove off gazed anchor), right iron-pulls (yank toward it)
 addEventListener('mousedown', (e) => {
-  if (e.button === 0) pushing = true;
+  if (e.button === 0) { pushing = true; fireCoin(); }   // left-click: a coinshot, and steel-push while held
   if (e.button === 2) pulling = true;
 });
 addEventListener('mouseup', (e) => {
@@ -1555,6 +1575,18 @@ function animate() {
       av.arms[0].rotation.x = -sw; av.arms[1].rotation.x = sw;
     }
     for (const [id, av] of peerAvatars) if (!pr.has(id)) { scene.remove(av.group); peerAvatars.delete(id); }
+  }
+
+  // coinshots: spawn coins others fired, advance + draw them all, retire the spent ones
+  for (const f of netTakeFires()) {
+    const proj = combat.spawnCoin(f.id, f.x, f.y, f.z, f.dx, f.dy, f.dz);
+    const mesh = new THREE.Mesh(coinGeo, coinMat); mesh.position.set(f.x, f.y, f.z); mesh.userData.noShadow = true; scene.add(mesh);
+    coins.push({ p: proj, mesh });
+  }
+  for (let i = coins.length - 1; i >= 0; i--) {
+    const c = coins[i];
+    if (!combat.stepProjectile(W, c.p, dt)) { scene.remove(c.mesh); coins.splice(i, 1); continue; }
+    c.mesh.position.set(c.p.x, c.p.y, c.p.z);
   }
 
   // tin: ease the senses open — thinner fog & mist, a brighter, colder clarity
@@ -1722,7 +1754,7 @@ if (import.meta.env.DEV) {
     resolveWalls: () => { resolveWalls(W, P); player.position.set(P.x, P.y, P.z); return { x: +P.x.toFixed(2), z: +P.z.toFixed(2) }; },
     interiorLights,
     set: (x: number, y: number, z: number) => { P.x = x; P.y = y; P.z = z; P.vx = P.vz = P.vy = P.px = P.pz = 0; player.position.set(x, y, z); },
-    keys, peerAvatars, combat,
+    keys, peerAvatars, combat, coins, fireCoin,
     net: () => ({ connected: netConnected(), peers: [...netPeers().entries()], avatars: peerAvatars.size }),
     diag: () => ({ isLocked: controls.isLocked, loreOpen, keysDown: Object.keys(keys).filter(k => keys[k]) }),
     key: (code: string, down: boolean) => { keys[code] = down; },

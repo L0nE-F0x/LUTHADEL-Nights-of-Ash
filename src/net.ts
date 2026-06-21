@@ -13,8 +13,10 @@ type Sample = PeerState & { t: number };
 
 const INTERP_DELAY = 100;   // ms in the past we render remote players, so we always interpolate
 
+export type FireEvent = { id: number; x: number; y: number; z: number; dx: number; dy: number; dz: number };
 const buffers = new Map<number, Sample[]>();   // peer id -> recent timestamped snapshots
 const _interp = new Map<number, PeerState>();  // reused output of netInterpolated()
+let _fires: FireEvent[] = [];                  // coinshots from other players, drained each frame
 let ws: WebSocket | null = null;
 let myId = 0;
 let connected = false;
@@ -57,6 +59,9 @@ function connect(url: string) {
         b.push({ x: p.s.x, y: p.s.y, z: p.s.z, yaw: p.s.yaw, t: now });
         if (b.length > 12) b.shift();
       }
+    } else if (m.t === 'fire') {
+      const s = m.s as { x: number; y: number; z: number; dx: number; dy: number; dz: number };
+      _fires.push({ id: m.id as number, x: s.x, y: s.y, z: s.z, dx: s.dx, dy: s.dy, dz: s.dz });
     } else if (m.t === 'leave') { buffers.delete(m.id as number); }
   };
 }
@@ -69,6 +74,15 @@ export function netSend(x: number, y: number, z: number, yaw: number, dt: number
   _accum = 0;
   ws.send(JSON.stringify({ t: 'state', s: { x: +x.toFixed(2), y: +y.toFixed(2), z: +z.toFixed(2), yaw: +yaw.toFixed(3) } }));
 }
+
+// tell everyone we flicked a coinshot from (x,y,z) along unit dir (dx,dy,dz)
+export function netFire(x: number, y: number, z: number, dx: number, dy: number, dz: number) {
+  if (!connected || !ws) return;
+  ws.send(JSON.stringify({ t: 'fire', s: { x: +x.toFixed(2), y: +y.toFixed(2), z: +z.toFixed(2), dx: +dx.toFixed(3), dy: +dy.toFixed(3), dz: +dz.toFixed(3) } }));
+}
+// drain the coinshots received from other players since last frame
+export function netTakeFires(): FireEvent[] { const a = _fires; _fires = []; return a; }
+export function netId(): number { return myId; }
 
 function lerpAngle(a: number, b: number, t: number): number {
   let d = (b - a) % (Math.PI * 2);

@@ -37,7 +37,13 @@ wss.on('connection', (ws) => {
   ws.on('message', (data) => {
     try {
       const msg = JSON.parse(data);
-      if (msg.t === 'state') { const c = clients.get(ws); if (c) c.state = msg.s; }
+      const c = clients.get(ws);
+      if (!c) return;
+      if (msg.t === 'state') { c.state = msg.s; }
+      else if (msg.t === 'fire') {                 // a coinshot — relay it to everyone else
+        const out = JSON.stringify({ t: 'fire', id: c.id, s: msg.s });
+        for (const sock of clients.keys()) if (sock !== ws && sock.readyState === 1) sock.send(out);
+      }
     } catch { /* ignore malformed */ }
   });
 
