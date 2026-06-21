@@ -44,7 +44,7 @@ export function stepProjectile(w: SimWorld, p: Projectile, dt: number): boolean 
 }
 
 // does coin `p` strike player `s` this tick? (sphere around the torso, a little below the eye)
-export function coinHitsPlayer(p: Projectile, s: PlayerState): boolean {
+export function coinHitsPlayer(p: Projectile, s: { x: number; y: number; z: number }): boolean {
   const dx = p.x - s.x, dy = p.y - (s.y - 0.7), dz = p.z - s.z;
   return dx * dx + dy * dy + dz * dz <= PLAYER_RADIUS * PLAYER_RADIUS;
 }

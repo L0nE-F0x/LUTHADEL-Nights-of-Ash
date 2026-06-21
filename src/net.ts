@@ -17,6 +17,7 @@ export type FireEvent = { id: number; x: number; y: number; z: number; dx: numbe
 const buffers = new Map<number, Sample[]>();   // peer id -> recent timestamped snapshots
 const _interp = new Map<number, PeerState>();  // reused output of netInterpolated()
 let _fires: FireEvent[] = [];                  // coinshots from other players, drained each frame
+let _hits: { dmg: number; from: number }[] = []; // coinshots that struck ME, drained each frame
 let ws: WebSocket | null = null;
 let myId = 0;
 let connected = false;
@@ -62,6 +63,8 @@ function connect(url: string) {
     } else if (m.t === 'fire') {
       const s = m.s as { x: number; y: number; z: number; dx: number; dy: number; dz: number };
       _fires.push({ id: m.id as number, x: s.x, y: s.y, z: s.z, dx: s.dx, dy: s.dy, dz: s.dz });
+    } else if (m.t === 'hit') {
+      if ((m.target as number) === myId) _hits.push({ dmg: m.dmg as number, from: m.from as number });
     } else if (m.t === 'leave') { buffers.delete(m.id as number); }
   };
 }
@@ -83,6 +86,14 @@ export function netFire(x: number, y: number, z: number, dx: number, dy: number,
 // drain the coinshots received from other players since last frame
 export function netTakeFires(): FireEvent[] { const a = _fires; _fires = []; return a; }
 export function netId(): number { return myId; }
+
+// tell the server one of my coins struck player `target`
+export function netHit(target: number, dmg: number) {
+  if (!connected || !ws) return;
+  ws.send(JSON.stringify({ t: 'hit', target, dmg }));
+}
+// drain the hits that landed on me since last frame
+export function netTakeHits(): { dmg: number; from: number }[] { const a = _hits; _hits = []; return a; }
 
 function lerpAngle(a: number, b: number, t: number): number {
   let d = (b - a) % (Math.PI * 2);

@@ -167,8 +167,19 @@ Vite + a TS server share types cleanly via the `shared/` package.
   so it's a single canonical Luthadel and every client builds the identical map.
 - ✅ **Phase 0b** — physics is a pure, engine-free `stepPlayer` in `src/sim.ts`.
 - ✅ **Phase 1 (first cut)** — relay multiplayer: `server/index.mjs` (ws relay) + `src/net.ts`
-  (prod-safe client) + `makeFigure` avatars in `main.ts`. Verified end-to-end locally.
-- ⏳ **Phase 2** — make the server authoritative (it imports `sim.ts` and runs `stepPlayer`);
+  (prod-safe client) + `makeFigure` avatars in `main.ts`. Verified end-to-end locally **and live**
+  (Render relay + Netlify client, `VITE_SERVER_URL=wss://luthadel-nights-of-ash.onrender.com`).
+- ✅ **Phase 2A** — networked **coinshots**: left-click flicks a coin (`combat.spawnCoin`/
+  `stepProjectile`), the server relays `{t:'fire'}` so everyone sees everyone's coins. (Steel-push
+  moved to **hold Q** so left-click is coinshot-only — no more sight-line flicker per shot.)
+- ✅ **Phase 2B (first cut — client-side / trust-based hit-reg)** — the shooter tests its own coins
+  vs the **interpolated** peer positions (`coinHitsPlayer` vs `netInterpolated()`) → `{t:'hit'}`
+  relay → victim applies `combat.damage` (34 dmg, ~3 to down) → `respawn()` at ≤0 HP; combat HUD
+  (health bar + damage vignette + hit-confirm + downed banner), shown only while connected.
+  ⚠️ Limits: per-frame sphere check (fast coins can tunnel; no lag-comp), and a coin that hits on
+  my screen keeps flying on peers' screens (no despawn relay). Both are fixed by server authority.
+- ⏳ **Phase 2C / authority** — push/pull **players** (`applyAllomanticImpulse` knockback relay),
+  then make the server authoritative (it imports `sim.ts` and runs `stepPlayer`);
   client prediction + reconciliation + snapshot interpolation; then combat. Needs the
   collision world on the server — extract the deterministic `ROOFS`/`METALS` gen into a
   shared engine-free `world.ts` (the gen currently lives in `main.ts`, intertwined with mesh

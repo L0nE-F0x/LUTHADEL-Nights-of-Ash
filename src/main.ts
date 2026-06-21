@@ -2,7 +2,7 @@ import './style.css';
 import { mulberry32 } from './rng';
 import { stepPlayer, steelLeap, surfaceAt, resolveWalls, metalsNear, newPlayerState, GRID, gkey } from './sim';
 import type { Metal, Roof, SimWorld, PlayerState, PlayerInput } from './sim';
-import { netStart, netSend, netPeers, netConnected, netInterpolated, netFire, netTakeFires, netId } from './net';
+import { netStart, netSend, netPeers, netConnected, netInterpolated, netFire, netTakeFires, netId, netHit, netTakeHits } from './net';
 import * as combat from './combat';
 import * as THREE from 'three';
 import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
@@ -1313,9 +1313,28 @@ function fireCoin() {
   netFire(ox, oy, oz, _aim.x, _aim.y, _aim.z);
 }
 
+// combat state (Phase 2B): health, feedback flashes, respawn points
+let myHealth = combat.MAX_HEALTH;
+let hitFlash = 0, hurtFlash = 0, downedTimer = 0;
+const SPAWNS: [number, number, number][] = [
+  [0, 1.7, ZB - 16], [0, 1.7, 0], [0, 1.7, FRONT_Z + 10], [AV / 2 + 6, 1.7, 30], [-(AV / 2 + 6), 1.7, -50],
+];
+function respawn() {
+  const s = SPAWNS[(Math.random() * SPAWNS.length) | 0];
+  P.x = s[0]; P.y = s[1]; P.z = s[2]; P.vx = P.vz = P.vy = P.px = P.pz = 0; P.grounded = true;
+  player.position.set(P.x, P.y, P.z);
+  myHealth = combat.MAX_HEALTH;
+  downedTimer = 1.4;
+}
+const hudEl = document.getElementById('hud')!;
+const hpFill = document.getElementById('hpfill')!;
+const hitMark = document.getElementById('hitmark')!;
+const hurtEl = document.getElementById('hurt')!;
+const downedEl = document.getElementById('downed')!;
+
 // further allomantic powers
 let pulling = false;                       // iron-pull (right-mouse): yank toward an anchor
-let pushing = false;                        // steel-push (left-mouse): shove off the gazed anchor
+let pushing = false;                        // steel-push (hold Q): shove off the gazed anchor
 let pullTarget: THREE.Vector3 | null = null;
 let tin = false;                           // burning tin (T): heightened senses, thinner mist
 let tinAmt = 0;                            // eases toward tin ? 1 : 0
@@ -1434,6 +1453,7 @@ addEventListener('keydown', (e) => {
   if (e.code === 'KeyM') toggleMute();
   if (e.code === 'KeyF') burning = true;
   if (e.code === 'KeyG') atium = true;                     // burn atium — see the near future
+  if (e.code === 'KeyQ') pushing = true;                   // hold Q — steel-push off the gazed anchor
   if (e.code === 'KeyT' && !e.repeat) tin = !tin;          // toggle tin — heightened senses
   if (e.code === 'Backslash') {                            // toggle shadow maps (weak GPUs)
     localStorage.setItem('lutha_noshadow', localStorage.getItem('lutha_noshadow') === '1' ? '0' : '1');
@@ -1445,14 +1465,14 @@ addEventListener('keyup', (e) => {
   keys[e.code] = false;
   if (e.code === 'KeyF') burning = false;
   if (e.code === 'KeyG') atium = false;
+  if (e.code === 'KeyQ') pushing = false;
 });
 // mouse: left steel-pushes (shove off gazed anchor), right iron-pulls (yank toward it)
 addEventListener('mousedown', (e) => {
-  if (e.button === 0) { pushing = true; fireCoin(); }   // left-click: a coinshot, and steel-push while held
-  if (e.button === 2) pulling = true;
+  if (e.button === 0) fireCoin();          // left-click: a coinshot (no steel-push, so no sight-lines flicker)
+  if (e.button === 2) pulling = true;      // right-click: iron-pull (hold)
 });
 addEventListener('mouseup', (e) => {
-  if (e.button === 0) pushing = false;
   if (e.button === 2) pulling = false;
 });
 addEventListener('contextmenu', (e) => e.preventDefault());
@@ -1583,11 +1603,31 @@ function animate() {
     const mesh = new THREE.Mesh(coinGeo, coinMat); mesh.position.set(f.x, f.y, f.z); mesh.userData.noShadow = true; scene.add(mesh);
     coins.push({ p: proj, mesh });
   }
+  const me = netId();
+  const targets = netInterpolated();                  // peers, ~100 ms in the past (what I see = what I shoot)
   for (let i = coins.length - 1; i >= 0; i--) {
     const c = coins[i];
     if (!combat.stepProjectile(W, c.p, dt)) { scene.remove(c.mesh); coins.splice(i, 1); continue; }
     c.mesh.position.set(c.p.x, c.p.y, c.p.z);
+    if (c.p.owner === me) {                            // only MY coins score hits (client-side, trust-based)
+      let struck = false;
+      for (const [pid, s] of targets) {
+        if (combat.coinHitsPlayer(c.p, s)) { netHit(pid, combat.COIN_DAMAGE); hitFlash = 0.18; struck = true; break; }
+      }
+      if (struck) { scene.remove(c.mesh); coins.splice(i, 1); continue; }
+    }
   }
+  // damage I took this frame (a coin someone else claims struck me)
+  for (const h of netTakeHits()) { myHealth = combat.damage(myHealth, h.dmg).health; hurtFlash = 0.4; if (myHealth <= 0) respawn(); }
+  // combat HUD (only while in a PvP relay)
+  if (netConnected()) {
+    hudEl.style.display = 'block';
+    hpFill.style.width = clamp(myHealth, 0, 100) + '%';
+    hpFill.style.background = myHealth > 35 ? 'linear-gradient(90deg,#e8b15a,#d98a3a)' : '#b8332a';
+  } else hudEl.style.display = 'none';
+  hitFlash = Math.max(0, hitFlash - dt); hitMark.style.opacity = String(Math.min(1, hitFlash * 6));
+  hurtFlash = Math.max(0, hurtFlash - dt); hurtEl.style.opacity = String(Math.min(0.6, hurtFlash));
+  downedTimer = Math.max(0, downedTimer - dt); downedEl.style.display = downedTimer > 0 ? 'grid' : 'none';
 
   // tin: ease the senses open — thinner fog & mist, a brighter, colder clarity
   tinAmt += ((tin ? 1 : 0) - tinAmt) * Math.min(1, dt * 4);

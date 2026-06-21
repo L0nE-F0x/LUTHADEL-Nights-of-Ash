@@ -152,3 +152,41 @@ body.pewter #pewterfx { opacity: 1; }
   from { opacity: 0; transform: translate(-50%, 10px); }
   to   { opacity: 1; transform: translate(-50%, 0); }
 }
+
+/* ===== Combat HUD (Phase 2B) — only shown while connected to a PvP relay ===== */
+#hud {
+  display: none; position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%);
+  z-index: 7; pointer-events: none;
+}
+#hpbar {
+  width: 240px; height: 12px; border-radius: 7px;
+  background: rgba(20,14,10,0.6); border: 1px solid rgba(217,138,58,0.45);
+  box-shadow: inset 0 1px 3px rgba(0,0,0,0.6), 0 0 18px rgba(176,57,43,0.18); overflow: hidden;
+}
+#hpfill {
+  width: 100%; height: 100%; border-radius: 6px;
+  background: linear-gradient(90deg,#e8b15a,#d98a3a);
+  transition: width .18s ease, background .25s ease;
+}
+/* red damage vignette — flares when I take a coin */
+#hurt {
+  position: fixed; inset: 0; z-index: 6; pointer-events: none; opacity: 0;
+  background: radial-gradient(ellipse at center, rgba(120,10,6,0) 45%, rgba(140,12,8,0.85) 100%);
+  transition: opacity .12s ease;
+}
+/* hit confirmation crosshair flash — blooms when MY coin connects */
+#hitmark {
+  position: fixed; left: 50%; top: 50%; transform: translate(-50%,-50%);
+  z-index: 8; pointer-events: none; opacity: 0;
+  color: #ffd98a; font-size: 26px; font-weight: 700; text-shadow: 0 0 10px rgba(255,200,120,0.9);
+  transition: opacity .1s ease;
+}
+/* downed banner during the brief respawn beat */
+#downed {
+  display: none; position: fixed; inset: 0; z-index: 9; place-items: center;
+  pointer-events: none; background: rgba(8,5,4,0.55);
+}
+#downed span {
+  font-size: 22px; letter-spacing: .04em; color: rgba(230,210,180,0.92);
+  text-shadow: 0 0 18px rgba(176,57,43,0.6);
+}

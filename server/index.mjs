@@ -44,6 +44,10 @@ wss.on('connection', (ws) => {
         const out = JSON.stringify({ t: 'fire', id: c.id, s: msg.s });
         for (const sock of clients.keys()) if (sock !== ws && sock.readyState === 1) sock.send(out);
       }
+      else if (msg.t === 'hit') {                  // shooter claims a hit — relay so the target takes damage
+        const out = JSON.stringify({ t: 'hit', from: c.id, target: msg.target, dmg: msg.dmg });
+        for (const sock of clients.keys()) if (sock !== ws && sock.readyState === 1) sock.send(out);
+      }
     } catch { /* ignore malformed */ }
   });
 
